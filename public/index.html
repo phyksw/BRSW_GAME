@@ -127,12 +127,14 @@ const SIZE=15, CELLS=SIZE*SIZE;
 
 /* ---- identity ---- */
 $('nick').value = localStorage.getItem('gname') || '';
-if(!sessionStorage.getItem('gtoken')) sessionStorage.setItem('gtoken', crypto.randomUUID());
-const TOKEN = sessionStorage.getItem('gtoken');
+/* localStorage (not session): re-opening the invite link in a NEW tab must reclaim my seat */
+if(!localStorage.getItem('gtoken')) localStorage.setItem('gtoken', crypto.randomUUID());
+const TOKEN = localStorage.getItem('gtoken');
 
 /* ---- state ---- */
 let ws=null, room=null, myRole=0, board=new Array(CELLS).fill(0),
-    turn=1, winner=0, winLine=null, seats={1:null,2:null}, lastMove=-1, inGame=false;
+    turn=1, winner=0, winLine=null, seats={1:null,2:null}, lastMove=-1, inGame=false,
+    retry=0, reconnT=null, pingT=null;
 
 /* ---- lobby ---- */
 const CODE_CHARS='ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -145,32 +147,43 @@ $('btnJoin').onclick=()=>{ if(!myName())return; const c=$('code').value.trim().t
 $('code').addEventListener('keydown',e=>{ if(e.key==='Enter') $('btnJoin').click(); });
 
 function enter(code){ room=code; location.hash=code; inGame=true;
+  board=new Array(CELLS).fill(0); turn=1; winner=0; winLine=null; lastMove=-1; hover=-1;   // reset per-room state
+  seats={1:null,2:null}; myRole=0; retry=0; clearReconn(); $('log').innerHTML='';
   $('lobby').classList.add('hidden'); $('game').classList.remove('hidden');
-  $('roomcode').textContent=code; connect(); draw(); }
-function leave(){ inGame=false; try{ws&&ws.close();}catch(e){} ws=null; room=null;
+  $('roomcode').textContent=code; ui(); connect(); draw(); }
+function leave(){ inGame=false; clearReconn(); stopPing();
+  if(ws){ try{ ws.onclose=null; ws.close(); }catch(e){} } ws=null; room=null;
   history.replaceState(null,'',location.pathname);
   $('game').classList.add('hidden'); $('lobby').classList.remove('hidden'); }
 $('btnLeave').onclick=leave;
 $('btnCopy').onclick=async()=>{ try{ await navigator.clipboard.writeText(location.origin+location.pathname+'#'+room);
   $('btnCopy').textContent='✓ 복사됨'; setTimeout(()=>$('btnCopy').textContent='🔗 초대링크 복사',1200);}catch(e){} };
 
-/* auto-join via #CODE */
-(function(){ const h=location.hash.replace('#','').toUpperCase();
-  if(/^[A-Z0-9]{4,8}$/.test(h)){ if($('nick').value.trim()) enter(h); else $('code').value=h; } })();
-
 /* ---- websocket ---- */
+function clearReconn(){ if(reconnT){ clearTimeout(reconnT); reconnT=null; } }
+function stopPing(){ if(pingT){ clearInterval(pingT); pingT=null; } }
 function connect(){
+  clearReconn();
+  if(ws){ try{ ws.onclose=null; ws.onmessage=null; ws.close(); }catch(e){} }   // never leave an orphan socket behind
   const proto=location.protocol==='https:'?'wss':'ws';
-  ws=new WebSocket(proto+'://'+location.host+'/ws/'+room);
-  ws.onopen=()=>ws.send(JSON.stringify({t:'join',name:$('nick').value.trim().slice(0,12),token:TOKEN}));
-  ws.onmessage=e=>{ let m; try{m=JSON.parse(e.data);}catch(err){return;} handle(m); };
-  ws.onclose=()=>{ if(inGame){ log('sys','연결 끊김 — 재접속 중…'); setTimeout(()=>{ if(inGame) connect(); },1300); } };
+  const sock=new WebSocket(proto+'://'+location.host+'/ws/'+room); ws=sock;
+  sock.onopen=()=>{ if(sock!==ws) return; retry=0;
+    sock.send(JSON.stringify({t:'join',name:$('nick').value.trim().slice(0,12),token:TOKEN}));
+    stopPing(); pingT=setInterval(()=>{ if(sock===ws&&sock.readyState===1) sock.send('ping'); },30000); };  // keepalive (answered by the DO runtime)
+  sock.onmessage=e=>{ if(sock!==ws) return; let m; try{m=JSON.parse(e.data);}catch(err){return;}
+    if(m&&typeof m==='object') handle(m); };
+  sock.onclose=()=>{ if(sock!==ws) return; stopPing();
+    if(!inGame) return;
+    if(++retry>8){ log('sys','접속 실패 — 방이 가득 찼거나 서버 문제예요. 나갔다가 다시 들어와 보세요.'); return; }
+    log('sys','연결 끊김 — 재접속 중…');
+    reconnT=setTimeout(()=>{ reconnT=null; if(inGame) connect(); }, Math.min(15000,1300*retry)); };
 }
 function send(o){ if(ws&&ws.readyState===1) ws.send(JSON.stringify(o)); }
 
 function handle(m){
   if(m.t==='state'){ board=m.board.split('').map(Number); turn=m.turn; winner=m.winner;
-    winLine=m.winLine; seats=m.seats; myRole=m.role; lastMove=-1; ui(); draw();
+    winLine=m.winLine; seats=m.seats; myRole=m.role;
+    lastMove=(typeof m.last==='number'&&m.last>=0&&board[m.last])?m.last:-1; ui(); draw();
     log('sys', myRole? `당신은 ${myRole===1?'흑':'백'}입니다 (라운드 ${m.round})` : '관전 모드'); return; }
   if(m.t==='move'){ board[m.i]=m.stone; turn=m.turn; winner=m.winner; winLine=m.winLine;
     lastMove=m.i; ui(); draw(); return; }
@@ -189,6 +202,7 @@ function ui(){
     el.classList.toggle('me', myRole===s); }
   const t=$('turnmsg'); t.className='';
   $('btnRestart').classList.toggle('hidden', !(winner && (myRole===1||myRole===2)));
+  $('btnRestart').disabled=false;
   if(winner===3){ t.textContent='무승부!'; t.className='win'; }
   else if(winner){ t.textContent=(winner===myRole?'🏆 승리!':(myRole?'패배…':'게임 종료'))+' — '+(winner===1?'흑':'백')+' 승'; t.className='win'; }
   else if(!(seats&&seats[1]&&seats[2])) t.textContent='상대를 기다리는 중… 초대링크를 보내세요';
@@ -205,7 +219,7 @@ function log(kind,text,name){
 }
 $('btnSend').onclick=()=>{ const v=$('chat').value.trim(); if(!v)return; send({t:'chat',text:v}); $('chat').value=''; };
 $('chat').addEventListener('keydown',e=>{ if(e.key==='Enter') $('btnSend').click(); });
-$('btnRestart').onclick=()=>send({t:'restart'});
+$('btnRestart').onclick=()=>{ $('btnRestart').disabled=true; send({t:'restart'}); };
 
 /* ---- board ---- */
 const cv=$('board'), cx=cv.getContext('2d');
@@ -263,6 +277,10 @@ cv.addEventListener('mouseleave',()=>{ hover=-1; draw(); });
 cv.addEventListener('click',e=>{ const i=cellAt(e);
   if(i<0||winner||board[i]!==0||myRole!==turn||!(seats[1]&&seats[2])) return;
   send({t:'move',i}); });
+
+/* auto-join via #CODE (last: everything above must be initialized) */
+(function(){ const h=location.hash.replace('#','').toUpperCase();
+  if(/^[A-Z0-9]{4,8}$/.test(h)){ if($('nick').value.trim()) enter(h); else $('code').value=h; } })();
 </script>
 </body>
 </html>
