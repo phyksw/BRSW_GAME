@@ -1,0 +1,18 @@
+name = "games"
+main = "src/worker.js"
+compatibility_date = "2026-06-01"
+
+# Static client (lobby + games UI). Non-asset paths (e.g. /ws/*) fall through to the worker.
+[assets]
+directory = "public"
+binding = "ASSETS"
+
+# One Durable Object per room: holds the game state + all WebSocket connections.
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "GameRoom"
+
+# Free plan requires SQLite-backed DO classes.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GameRoom"]

@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>🎮 멀티게임 라운지</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pretendard@1.3.9/dist/web/variable/pretendardvariable.min.css">
+<style>
+:root{--bg:#0b1020;--card:#141b30;--card2:#1a2340;--line:rgba(140,170,220,.16);--text:#eef3fb;
+  --soft:#9fb2cf;--mute:#66799c;--cyan:#35dcff;--coral:#ff6f61;--ok:#3ee08a;
+  --wood1:#e0b477;--wood2:#c08c4a;--sans:'Pretendard Variable',Pretendard,system-ui,sans-serif}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:radial-gradient(1000px 700px at 70% -10%,#141f3d 0%,var(--bg) 60%);color:var(--text);
+  font-family:var(--sans);min-height:100vh}
+.wrap{max-width:1060px;margin:0 auto;padding:20px 16px}
+header{display:flex;align-items:center;gap:10px;margin-bottom:18px}
+header h1{font-size:20px;font-weight:800}
+header .tag{font-size:10px;letter-spacing:.12em;color:var(--cyan);border:1px solid rgba(53,220,255,.35);
+  padding:3px 9px;border-radius:999px;text-transform:uppercase}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:20px}
+.hidden{display:none!important}
+/* ---- lobby ---- */
+#lobby{max-width:460px;margin:6vh auto 0}
+#lobby h2{font-size:16px;font-weight:800;margin-bottom:14px}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:11.5px;color:var(--soft);margin-bottom:6px}
+input[type=text]{width:100%;background:var(--card2);border:1px solid var(--line);border-radius:12px;
+  color:var(--text);font-family:var(--sans);font-size:14px;padding:11px 13px;outline:none}
+input[type=text]:focus{border-color:rgba(53,220,255,.5)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;border:none;
+  font-family:var(--sans);font-weight:700;font-size:13.5px;border-radius:12px;padding:11px 16px;
+  background:var(--card2);color:var(--text);border:1px solid var(--line);transition:filter .12s}
+.btn:hover{filter:brightness(1.15)}
+.btn.primary{background:linear-gradient(135deg,#20c9e8,#1897d8);border:none;color:#04222e}
+.btn.coral{background:linear-gradient(135deg,#ff8a76,#f4604f);border:none;color:#3d0f08}
+.btn:disabled{opacity:.45;cursor:not-allowed;filter:none}
+.row{display:flex;gap:9px}.row>*{flex:1}
+.games{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:14px 0 18px}
+.gitem{display:flex;align-items:center;gap:9px;background:var(--card2);border:1px solid var(--line);
+  border-radius:12px;padding:10px 12px;font-size:13px;font-weight:700}
+.gitem .soon{margin-left:auto;font-size:9.5px;color:var(--mute);border:1px solid var(--line);
+  padding:2px 7px;border-radius:999px}
+.gitem.on{border-color:rgba(62,224,138,.45)}
+.gitem.on .soon{color:var(--ok);border-color:rgba(62,224,138,.45)}
+/* ---- game ---- */
+#game{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px}
+@media(max-width:820px){#game{grid-template-columns:1fr}}
+.boardcard{display:flex;flex-direction:column;align-items:center;gap:12px}
+#board{border-radius:14px;box-shadow:0 16px 40px -18px rgba(0,0,0,.7);cursor:pointer;touch-action:manipulation;
+  max-width:100%;height:auto}
+.topbar{display:flex;align-items:center;gap:10px;width:100%;flex-wrap:wrap}
+.codechip{display:flex;align-items:center;gap:8px;background:var(--card2);border:1px solid var(--line);
+  border-radius:999px;padding:7px 14px;font-size:13px;font-weight:800;letter-spacing:.14em}
+.codechip small{letter-spacing:0;font-weight:600;color:var(--mute)}
+#turnmsg{margin-left:auto;font-size:13px;font-weight:700;color:var(--soft)}
+#turnmsg.me{color:var(--ok)}
+#turnmsg.win{color:var(--coral)}
+.side{display:flex;flex-direction:column;gap:12px;min-height:0}
+.pl{display:flex;align-items:center;gap:10px;background:var(--card2);border:1px solid var(--line);
+  border-radius:12px;padding:9px 12px;font-size:13px;font-weight:700}
+.pl .stone{width:18px;height:18px;border-radius:50%;flex:none;border:1px solid rgba(255,255,255,.25)}
+.pl .stone.b{background:radial-gradient(circle at 34% 30%,#5a5a66,#0a0a10)}
+.pl .stone.w{background:radial-gradient(circle at 34% 30%,#ffffff,#c9ccd6)}
+.pl .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pl .st{margin-left:auto;font-size:10.5px;color:var(--mute)}
+.pl.turn{border-color:rgba(62,224,138,.55)}
+.pl.me .nm::after{content:" (나)";color:var(--cyan);font-size:11px}
+#watch{font-size:11px;color:var(--mute);text-align:right}
+#log{flex:1;background:var(--card2);border:1px solid var(--line);border-radius:12px;
+  padding:10px 12px;overflow-y:auto;font-size:12.5px;line-height:1.55;min-height:180px;max-height:320px}
+#log .sys{color:var(--mute);font-size:11.5px}
+#log .nm{font-weight:800;color:var(--cyan)}
+.chatrow{display:flex;gap:7px}
+.chatrow input{flex:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms</span></header>
+
+  <!-- lobby -->
+  <div id="lobby" class="card">
+    <h2>친구랑 같이 하는 미니게임</h2>
+    <div class="games">
+      <div class="gitem on">⚫ 오목 <span class="soon">PLAY</span></div>
+      <div class="gitem">🎨 그림그리기 <span class="soon">준비중</span></div>
+      <div class="gitem">🥌 알까기 <span class="soon">준비중</span></div>
+      <div class="gitem">🎵 리듬 <span class="soon">준비중</span></div>
+      <div class="gitem">🗺️ 땅따먹기 <span class="soon">준비중</span></div>
+    </div>
+    <div class="field"><label>닉네임</label><input type="text" id="nick" maxlength="12" placeholder="예: 김선장"></div>
+    <div class="field"><label>방 코드 (입장할 때만)</label><input type="text" id="code" maxlength="8" placeholder="예: A3K9F" style="text-transform:uppercase"></div>
+    <div class="row">
+      <button class="btn primary" id="btnNew">+ 새 방 만들기</button>
+      <button class="btn" id="btnJoin">방 입장</button>
+    </div>
+  </div>
+
+  <!-- game -->
+  <div id="game" class="hidden">
+    <div class="card boardcard">
+      <div class="topbar">
+        <span class="codechip"><small>ROOM</small> <span id="roomcode"></span></span>
+        <button class="btn" id="btnCopy" style="padding:7px 12px;font-size:12px">🔗 초대링크 복사</button>
+        <span id="turnmsg"></span>
+      </div>
+      <canvas id="board" width="600" height="600"></canvas>
+      <div class="row" style="width:100%">
+        <button class="btn coral hidden" id="btnRestart">↻ 새 판 (흑백 교대)</button>
+        <button class="btn" id="btnLeave" style="flex:0 0 auto">나가기</button>
+      </div>
+    </div>
+    <div class="card side">
+      <div class="pl" id="pl1"><span class="stone b"></span><span class="nm">—</span><span class="st"></span></div>
+      <div class="pl" id="pl2"><span class="stone w"></span><span class="nm">—</span><span class="st"></span></div>
+      <div id="watch"></div>
+      <div id="log"></div>
+      <div class="chatrow"><input type="text" id="chat" maxlength="200" placeholder="채팅…"><button class="btn" id="btnSend" style="flex:0 0 auto">전송</button></div>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const SIZE=15, CELLS=SIZE*SIZE;
+
+/* ---- identity ---- */
+$('nick').value = localStorage.getItem('gname') || '';
+if(!sessionStorage.getItem('gtoken')) sessionStorage.setItem('gtoken', crypto.randomUUID());
+const TOKEN = sessionStorage.getItem('gtoken');
+
+/* ---- state ---- */
+let ws=null, room=null, myRole=0, board=new Array(CELLS).fill(0),
+    turn=1, winner=0, winLine=null, seats={1:null,2:null}, lastMove=-1, inGame=false;
+
+/* ---- lobby ---- */
+const CODE_CHARS='ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const newCode=()=>Array.from({length:5},()=>CODE_CHARS[Math.random()*CODE_CHARS.length|0]).join('');
+function myName(){ const n=$('nick').value.trim().slice(0,12); if(!n){ $('nick').focus(); return null; }
+  localStorage.setItem('gname',n); return n; }
+$('btnNew').onclick=()=>{ if(!myName())return; enter(newCode()); };
+$('btnJoin').onclick=()=>{ if(!myName())return; const c=$('code').value.trim().toUpperCase();
+  if(!/^[A-Z0-9]{4,8}$/.test(c)){ $('code').focus(); return; } enter(c); };
+$('code').addEventListener('keydown',e=>{ if(e.key==='Enter') $('btnJoin').click(); });
+
+function enter(code){ room=code; location.hash=code; inGame=true;
+  $('lobby').classList.add('hidden'); $('game').classList.remove('hidden');
+  $('roomcode').textContent=code; connect(); draw(); }
+function leave(){ inGame=false; try{ws&&ws.close();}catch(e){} ws=null; room=null;
+  history.replaceState(null,'',location.pathname);
+  $('game').classList.add('hidden'); $('lobby').classList.remove('hidden'); }
+$('btnLeave').onclick=leave;
+$('btnCopy').onclick=async()=>{ try{ await navigator.clipboard.writeText(location.origin+location.pathname+'#'+room);
+  $('btnCopy').textContent='✓ 복사됨'; setTimeout(()=>$('btnCopy').textContent='🔗 초대링크 복사',1200);}catch(e){} };
+
+/* auto-join via #CODE */
+(function(){ const h=location.hash.replace('#','').toUpperCase();
+  if(/^[A-Z0-9]{4,8}$/.test(h)){ if($('nick').value.trim()) enter(h); else $('code').value=h; } })();
+
+/* ---- websocket ---- */
+function connect(){
+  const proto=location.protocol==='https:'?'wss':'ws';
+  ws=new WebSocket(proto+'://'+location.host+'/ws/'+room);
+  ws.onopen=()=>ws.send(JSON.stringify({t:'join',name:$('nick').value.trim().slice(0,12),token:TOKEN}));
+  ws.onmessage=e=>{ let m; try{m=JSON.parse(e.data);}catch(err){return;} handle(m); };
+  ws.onclose=()=>{ if(inGame){ log('sys','연결 끊김 — 재접속 중…'); setTimeout(()=>{ if(inGame) connect(); },1300); } };
+}
+function send(o){ if(ws&&ws.readyState===1) ws.send(JSON.stringify(o)); }
+
+function handle(m){
+  if(m.t==='state'){ board=m.board.split('').map(Number); turn=m.turn; winner=m.winner;
+    winLine=m.winLine; seats=m.seats; myRole=m.role; lastMove=-1; ui(); draw();
+    log('sys', myRole? `당신은 ${myRole===1?'흑':'백'}입니다 (라운드 ${m.round})` : '관전 모드'); return; }
+  if(m.t==='move'){ board[m.i]=m.stone; turn=m.turn; winner=m.winner; winLine=m.winLine;
+    lastMove=m.i; ui(); draw(); return; }
+  if(m.t==='roster'){ seats=m.seats; $('watch').textContent=m.watchers?`👀 관전 ${m.watchers}명`:''; ui(); return; }
+  if(m.t==='chat'){ log('chat',m.text,m.name); return; }
+  if(m.t==='sys'){ log('sys',m.text); return; }
+}
+
+/* ---- ui ---- */
+function ui(){
+  for(const s of [1,2]){ const el=$('pl'+s), nm=el.querySelector('.nm'), st=el.querySelector('.st');
+    const p=seats&&seats[s];
+    nm.textContent=p?p.name:'대기 중…';
+    st.textContent=p?(p.online?'온라인':'오프라인'):'';
+    el.classList.toggle('turn', !winner && turn===s && !!(seats[1]&&seats[2]));
+    el.classList.toggle('me', myRole===s); }
+  const t=$('turnmsg'); t.className='';
+  $('btnRestart').classList.toggle('hidden', !(winner && (myRole===1||myRole===2)));
+  if(winner===3){ t.textContent='무승부!'; t.className='win'; }
+  else if(winner){ t.textContent=(winner===myRole?'🏆 승리!':(myRole?'패배…':'게임 종료'))+' — '+(winner===1?'흑':'백')+' 승'; t.className='win'; }
+  else if(!(seats&&seats[1]&&seats[2])) t.textContent='상대를 기다리는 중… 초대링크를 보내세요';
+  else if(myRole===turn){ t.textContent='● 내 차례'; t.className='me'; }
+  else t.textContent=(turn===1?'흑':'백')+' 차례'+(myRole?'':' (관전)');
+}
+function log(kind,text,name){
+  const d=document.createElement('div');
+  if(kind==='sys'){ d.className='sys'; d.textContent='· '+text; }
+  else{ const n=document.createElement('span'); n.className='nm'; n.textContent=name+'  ';
+    d.appendChild(n); d.appendChild(document.createTextNode(text)); }
+  $('log').appendChild(d); $('log').scrollTop=$('log').scrollHeight;
+  while($('log').childNodes.length>120) $('log').removeChild($('log').firstChild);
+}
+$('btnSend').onclick=()=>{ const v=$('chat').value.trim(); if(!v)return; send({t:'chat',text:v}); $('chat').value=''; };
+$('chat').addEventListener('keydown',e=>{ if(e.key==='Enter') $('btnSend').click(); });
+$('btnRestart').onclick=()=>send({t:'restart'});
+
+/* ---- board ---- */
+const cv=$('board'), cx=cv.getContext('2d');
+const DPR=Math.min(2,window.devicePixelRatio||1), CSS=600, PAD=34;
+cv.width=CSS*DPR; cv.height=CSS*DPR; cv.style.width='min(600px,92vw)';
+const step=(CSS-PAD*2)/(SIZE-1);
+const px=i=>PAD+(i%SIZE)*step, py=i=>PAD+((i/SIZE)|0)*step;
+let hover=-1;
+
+function draw(){
+  cx.setTransform(DPR,0,0,DPR,0,0);
+  const g=cx.createLinearGradient(0,0,CSS,CSS); g.addColorStop(0,'#e2b87e'); g.addColorStop(1,'#c89554');
+  cx.fillStyle=g; cx.fillRect(0,0,CSS,CSS);
+  cx.strokeStyle='rgba(80,50,20,.55)'; cx.lineWidth=1;
+  for(let k=0;k<SIZE;k++){
+    cx.beginPath(); cx.moveTo(PAD,PAD+k*step); cx.lineTo(CSS-PAD,PAD+k*step); cx.stroke();
+    cx.beginPath(); cx.moveTo(PAD+k*step,PAD); cx.lineTo(PAD+k*step,CSS-PAD); cx.stroke(); }
+  cx.fillStyle='rgba(80,50,20,.75)';
+  for(const sx of [3,7,11]) for(const sy of [3,7,11]){
+    cx.beginPath(); cx.arc(PAD+sx*step,PAD+sy*step,3,0,7); cx.fill(); }
+  // hover ghost
+  if(hover>=0 && !winner && board[hover]===0 && myRole===turn && seats[1]&&seats[2]){
+    cx.globalAlpha=.4; stone(px(hover),py(hover),myRole); cx.globalAlpha=1; }
+  // stones
+  for(let i=0;i<CELLS;i++) if(board[i]) stone(px(i),py(i),board[i]);
+  // last move marker
+  if(lastMove>=0 && board[lastMove]){ cx.strokeStyle='#ff6f61'; cx.lineWidth=2;
+    cx.beginPath(); cx.arc(px(lastMove),py(lastMove),step*.46,0,7); cx.stroke(); }
+  // win line: connect the two farthest-apart cells of the winning row
+  if(winLine&&winLine.length>1){
+    let a=winLine[0], b=winLine[1], best=-1;
+    for(const i of winLine) for(const j of winLine){
+      const d=(px(i)-px(j))**2+(py(i)-py(j))**2;
+      if(d>best){ best=d; a=i; b=j; } }
+    cx.strokeStyle='rgba(255,111,97,.9)'; cx.lineWidth=4; cx.lineCap='round';
+    cx.beginPath(); cx.moveTo(px(a),py(a)); cx.lineTo(px(b),py(b)); cx.stroke(); }
+}
+function stone(x,y,v){
+  const r=step*.42, gr=cx.createRadialGradient(x-r*.35,y-r*.4,r*.1,x,y,r);
+  if(v===1){ gr.addColorStop(0,'#6a6a78'); gr.addColorStop(1,'#0a0a12'); }
+  else{ gr.addColorStop(0,'#ffffff'); gr.addColorStop(1,'#c3c7d4'); }
+  cx.fillStyle=gr; cx.beginPath(); cx.arc(x,y,r,0,7); cx.fill();
+  cx.strokeStyle='rgba(0,0,0,.35)'; cx.lineWidth=.8; cx.stroke();
+}
+function cellAt(e){
+  const rect=cv.getBoundingClientRect(), scale=CSS/rect.width;
+  const mx=(e.clientX-rect.left)*scale, my=(e.clientY-rect.top)*scale;
+  const gx=Math.round((mx-PAD)/step), gy=Math.round((my-PAD)/step);
+  if(gx<0||gx>=SIZE||gy<0||gy>=SIZE) return -1;
+  if(Math.abs(mx-(PAD+gx*step))>step*.45||Math.abs(my-(PAD+gy*step))>step*.45) return -1;
+  return gy*SIZE+gx;
+}
+cv.addEventListener('mousemove',e=>{ const i=cellAt(e); if(i!==hover){ hover=i; draw(); } });
+cv.addEventListener('mouseleave',()=>{ hover=-1; draw(); });
+cv.addEventListener('click',e=>{ const i=cellAt(e);
+  if(i<0||winner||board[i]!==0||myRole!==turn||!(seats[1]&&seats[2])) return;
+  send({t:'move',i}); });
+</script>
+</body>
+</html>
