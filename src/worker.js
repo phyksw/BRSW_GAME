@@ -22,14 +22,21 @@ const WORDS = ['사과','바나나','수박','포도','딸기','피자','햄버�
 const norm = s => String(s).replace(/\s+/g, '').toLowerCase();
 
 const emptyGame = (mode) => ({
-  mode: mode || null,                // 'omok' | 'draw' — fixed at room creation (first join)
+  mode: mode || null,                // 'omok' | 'draw' | 'alka' — fixed at room creation (first join)
   board: new Array(CELLS).fill(0),   // ── omok: 0 empty, 1 black, 2 white
   turn: 1, winner: 0, winLine: null, moves: 0, round: 1, last: -1,
-  seats: { 1: null, 2: null },       //    {token,name,online}
+  seats: { 1: null, 2: null },       //    {token,name,online} (shared by omok + alka)
   d: null,                           // ── draw: {players,order,drawer,word,roundN,roundEnd,phase,guessed}
+  a: null,                           // ── alka: {stones,turn,winner,round,phase,moves}
 });
 const emptyDraw = () => ({ players: {}, order: [], drawer: null, word: null,
   roundN: 0, roundEnd: 0, phase: 'lobby', guessed: {} });
+// alka: 5 black stones (role 1, bottom) vs 5 white (role 2, top) on a 600x600 board
+const emptyAlka = () => ({ stones: (() => { const st = [];
+    for (let k = 0; k < 5; k++) st.push({ x: 150 + k * 75, y: 140, o: 2, a: 1 });
+    for (let k = 0; k < 5; k++) st.push({ x: 150 + k * 75, y: 460, o: 1, a: 1 });
+    return st; })(),
+  turn: 1, winner: 0, round: 1, phase: 'idle', moves: 0 });
 
 export class GameRoom {
   constructor(ctx) {
@@ -80,6 +87,11 @@ export class GameRoom {
                word: (token === d.drawer || d.phase === 'reveal') ? d.word : null,
                strokes: this.strokes };
     }
+    if (g.mode === 'alka') {
+      const a = g.a;
+      return { t: 'state', mode: 'alka', role, seats: this.seatsPub(g),
+               turn: a.turn, winner: a.winner, round: a.round, phase: a.phase, stones: a.stones };
+    }
     return { t: 'state', mode: 'omok', board: g.board.join(''), turn: g.turn, winner: g.winner, winLine: g.winLine,
              round: g.round, last: g.last, role, seats: this.seatsPub(g) };
   }
@@ -124,8 +136,16 @@ export class GameRoom {
   }
   async alarm() {
     const g = await this.load();
+    const now = Date.now();
+    if (g.mode === 'alka' && g.a) {              // settle watchdog
+      if (g.a.phase === 'sim') {
+        if (now >= (g.a.simSince || 0) + 9_500) { g.a.phase = 'idle'; await this.save(); this.bcast({ t: 'abort' }); }
+        else await this.ctx.storage.setAlarm((g.a.simSince || now) + 10_000);
+      }
+      return;
+    }
     if (g.mode !== 'draw' || !g.d) return;
-    const d = g.d, now = Date.now();
+    const d = g.d;
     if (now < d.roundEnd - 250) { await this.ctx.storage.setAlarm(d.roundEnd); return; }  // stale alarm
     if (d.phase === 'drawing') await this.endRound(g, 'time');
     else if (d.phase === 'reveal') await this.startRound(g);
@@ -156,7 +176,8 @@ export class GameRoom {
       const token = String(m.token || '').slice(0, 40);
       if (!token) return;
       let dirty = false;
-      if (!g.mode) { g.mode = m.mode === 'draw' ? 'draw' : 'omok'; if (g.mode === 'draw') g.d = emptyDraw(); dirty = true; }
+      if (!g.mode) { g.mode = m.mode === 'draw' ? 'draw' : m.mode === 'alka' ? 'alka' : 'omok';
+        if (g.mode === 'draw') g.d = emptyDraw(); else if (g.mode === 'alka') g.a = emptyAlka(); dirty = true; }
       if (g.mode === 'draw') {                                  // draw: everyone is a player
         const d = g.d;
         const live = this.liveTokens(ws);
@@ -179,7 +200,7 @@ export class GameRoom {
       }
       let role = 0;
       for (const s of [1, 2]) if (g.seats[s] && g.seats[s].token === token) role = s;   // reclaim my seat
-      const midGame = g.moves > 0 && !g.winner;
+      const midGame = g.mode === 'alka' ? (g.a.moves > 0 && !g.a.winner) : (g.moves > 0 && !g.winner);
       if (!role) for (const s of [1, 2]) if (!role && !g.seats[s]) {                    // empty seats first
         g.seats[s] = { token, name, online: true }; role = s; dirty = true;
       }
@@ -244,6 +265,49 @@ export class GameRoom {
       return;
     }
 
+    if (m.t === 'flick') {                        // alka: turn player launches ONE of their stones
+      if (g.mode !== 'alka') return;
+      const a = g.a;
+      if (a.winner || a.phase !== 'idle' || att.role !== a.turn) return;
+      if (!g.seats[1] || !g.seats[2]) return;
+      const i = m.i | 0, s = a.stones[i];
+      if (!s || !s.a || s.o !== att.role) return;
+      const vx = Math.max(-1300, Math.min(1300, +m.vx || 0));
+      const vy = Math.max(-1300, Math.min(1300, +m.vy || 0));
+      if (Math.hypot(vx, vy) < 20) return;
+      a.phase = 'sim'; a.simSince = Date.now();
+      await this.save();
+      await this.ctx.storage.setAlarm(Date.now() + 10_000);   // safety: unstick if settle never arrives
+      this.bcast({ t: 'flick', i, vx, vy }, ws);  // others replay the same impulse locally
+      return;
+    }
+    if (m.t === 'settle') {                       // alka: flicker reports authoritative rest positions
+      if (g.mode !== 'alka') return;
+      const a = g.a;
+      if (a.phase !== 'sim' || att.role !== a.turn) return;
+      const arr = m.stones;
+      if (!Array.isArray(arr) || arr.length !== a.stones.length) return;
+      for (let k = 0; k < arr.length; k++) {
+        const e = arr[k], s = a.stones[k];
+        if (!Array.isArray(e) || e.length < 3) return;
+        const alive = s.a && e[2] ? 1 : 0;        // stones can't resurrect
+        s.a = alive;
+        if (alive) { s.x = Math.max(-40, Math.min(640, Math.round(+e[0] || 0)));
+                     s.y = Math.max(-40, Math.min(640, Math.round(+e[1] || 0))); }
+      }
+      a.moves++;
+      const c1 = a.stones.filter(s => s.a && s.o === 1).length;
+      const c2 = a.stones.filter(s => s.a && s.o === 2).length;
+      if (c2 === 0 && c1 > 0) a.winner = 1;
+      else if (c1 === 0 && c2 > 0) a.winner = 2;
+      else if (c1 === 0 && c2 === 0) a.winner = att.role === 1 ? 2 : 1;   // killed your own last stone too
+      else a.turn = a.turn === 1 ? 2 : 1;
+      a.phase = 'idle';
+      await this.save();
+      this.bcast({ t: 'settle', stones: a.stones, turn: a.turn, winner: a.winner });
+      return;
+    }
+
     if (m.t === 'move') {
       if (g.mode !== 'omok') return;
       const i = m.i | 0;
@@ -260,6 +324,22 @@ export class GameRoom {
       return;
     }
 
+    if (m.t === 'restart' && g.mode === 'alka') {  // alka rematch: reset stones, swap who starts
+      if (att.role !== 1 && att.role !== 2) return;
+      if (!g.a.winner) return;
+      const s1 = g.seats[1], s2 = g.seats[2];
+      g.seats[1] = s2; g.seats[2] = s1;
+      g.a = { ...emptyAlka(), round: (g.a.round || 1) + 1 };
+      await this.save();
+      for (const w of this.ctx.getWebSockets()) {
+        const at = w.deserializeAttachment() || {}; let role = 0;
+        for (const s of [1, 2]) if (g.seats[s] && g.seats[s].token === at.token) role = s;
+        w.serializeAttachment({ ...at, role });
+        try { w.send(JSON.stringify(this.stateFor(g, role, at.token))); } catch {}
+      }
+      this.bcast({ t: 'sys', text: `${att.name}님이 새 판을 시작했어요 (선공 교대)` });
+      return;
+    }
     if (m.t === 'restart') {                     // omok players only, after a finished game
       if (g.mode !== 'omok') return;
       if (att.role !== 1 && att.role !== 2) return;
@@ -295,6 +375,11 @@ export class GameRoom {
     }
     if (!still && att.role && g.seats[att.role] && g.seats[att.role].token === att.token) {
       g.seats[att.role].online = false; await this.save();
+    }
+    // alka: if the flicker vanished mid-simulation, unstick the room (positions stay at last settle)
+    if (g.mode === 'alka' && g.a && g.a.phase === 'sim' && !still && att.role === g.a.turn) {
+      g.a.phase = 'idle'; await this.save();
+      this.bcast({ t: 'abort' });
     }
     this.bcast(this.roster(g));
     if (att.name && !still) this.bcast({ t: 'sys', text: `${att.name} 퇴장` });

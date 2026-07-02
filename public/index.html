@@ -102,7 +102,7 @@ button.gitem{font-family:var(--sans);color:var(--text);text-align:left;cursor:po
     <div class="games" id="gamesList">
       <button type="button" class="gitem on sel" data-mode="omok">⚫ 오목 <span class="soon">PLAY</span></button>
       <button type="button" class="gitem on" data-mode="draw">🎨 그림그리기 <span class="soon">PLAY</span></button>
-      <div class="gitem">🥌 알까기 <span class="soon">준비중</span></div>
+      <button type="button" class="gitem on" data-mode="alka">🥌 알까기 <span class="soon">PLAY</span></button>
       <div class="gitem">🎵 리듬 <span class="soon">준비중</span></div>
       <div class="gitem">🗺️ 땅따먹기 <span class="soon">준비중</span></div>
     </div>
@@ -159,7 +159,8 @@ let ws=null, room=null, myRole=0, board=new Array(CELLS).fill(0),
     retry=0, reconnT=null, pingT=null;
 let MODE='omok', selMode='omok', timerIv=null,
     DRAW={phase:'lobby',roundEnd:0,youDrawer:false,word:null,mask:''},
-    tool={c:0,w:4};
+    tool={c:0,w:4},
+    AL={stones:[],turn:1,winner:0,phase:'idle',auth:'[]',mine:false};
 
 /* ---- lobby ---- */
 const CODE_CHARS='ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -179,6 +180,7 @@ function enter(code){ room=code; location.hash=code; inGame=true;
   board=new Array(CELLS).fill(0); turn=1; winner=0; winLine=null; lastMove=-1; hover=-1;   // reset per-room state
   seats={1:null,2:null}; myRole=0; retry=0; clearReconn(); $('log').innerHTML='';
   DRAW={phase:'lobby',roundEnd:0,youDrawer:false,word:null,mask:''};
+  AL={stones:[],turn:1,winner:0,phase:'idle',auth:'[]',mine:false}; stopAsim();
   setMode(selMode);                              // provisional; the server state message corrects it
   $('lobby').classList.add('hidden'); $('game').classList.remove('hidden');
   $('roomcode').textContent=code; ui(); connect(); draw(); if(MODE==='draw') clearDrawCanvas(); }
@@ -228,6 +230,23 @@ function handle(m){
     log('sys',`⏰ 정답은 「${m.word}」${m.reason==='all'?' — 전원 정답!':m.reason==='drawer-left'?' (출제자 퇴장)':''}`); return; }
   if(m.t==='phase'){ DRAW.phase=m.phase; if(m.players)renderScores(m.players); drawUiSync(); return; }
   if(m.t==='players'){ renderScores(m.players); return; }
+  /* ---- alka ---- */
+  if(m.t==='state'&&m.mode==='alka'){ setMode('alka'); stopAsim();
+    seats=m.seats; myRole=m.role;
+    AL={stones:m.stones.map(s=>({x:s.x,y:s.y,o:s.o,a:s.a,vx:0,vy:0})), turn:m.turn, winner:m.winner,
+        phase:m.phase||'idle', auth:JSON.stringify(m.stones), mine:false};
+    aui(); arender();
+    log('sys', myRole? `당신은 ${myRole===1?'흑(아래)':'백(위)'} — 라운드 ${m.round}. 내 돌을 당겨서 튕기세요!` : '관전 모드'); return; }
+  if(m.t==='flick'){ if(MODE!=='alka')return; const s=AL.stones[m.i]; if(!s||!s.a)return;
+    s.vx=m.vx; s.vy=m.vy; AL.phase='sim'; AL.mine=false; startAsim(); aui(); return; }
+  if(m.t==='settle'){ if(MODE!=='alka')return; stopAsim();
+    m.stones.forEach((s,k)=>{ const t=AL.stones[k]; t.x=s.x; t.y=s.y; t.a=s.a; t.vx=0; t.vy=0; });
+    AL.turn=m.turn; AL.winner=m.winner; AL.phase='idle'; AL.mine=false; AL.auth=JSON.stringify(m.stones);
+    aui(); arender();
+    if(m.winner) log('sys',(m.winner===1?'흑':'백')+' 승리! 🏆'); return; }
+  if(m.t==='abort'){ if(MODE!=='alka')return; stopAsim();
+    JSON.parse(AL.auth).forEach((s,k)=>{ const t=AL.stones[k]; if(t){ t.x=s.x; t.y=s.y; t.a=s.a; t.vx=0; t.vy=0; } });
+    AL.phase='idle'; AL.mine=false; aui(); arender(); return; }
   /* ---- omok ---- */
   if(m.t==='state'){ setMode('omok'); board=m.board.split('').map(Number); turn=m.turn; winner=m.winner;
     winLine=m.winLine; seats=m.seats; myRole=m.role;
@@ -235,7 +254,7 @@ function handle(m){
     log('sys', myRole? `당신은 ${myRole===1?'흑':'백'}입니다 (라운드 ${m.round})` : '관전 모드'); return; }
   if(m.t==='move'){ board[m.i]=m.stone; turn=m.turn; winner=m.winner; winLine=m.winLine;
     lastMove=m.i; ui(); draw(); return; }
-  if(m.t==='roster'){ seats=m.seats; $('watch').textContent=m.watchers?`👀 관전 ${m.watchers}명`:''; ui(); return; }
+  if(m.t==='roster'){ seats=m.seats; $('watch').textContent=m.watchers?`👀 관전 ${m.watchers}명`:''; ui(); aui(); return; }
   if(m.t==='chat'){ log('chat',m.text,m.name); return; }
   if(m.t==='sys'){ log('sys',m.text); return; }
 }
@@ -334,6 +353,8 @@ function setMode(mo){ MODE=mo; const dr=mo==='draw';
   $('pl1').classList.toggle('hidden',dr); $('pl2').classList.toggle('hidden',dr);
   $('scores').classList.toggle('hidden',!dr); $('wordbar').classList.toggle('hidden',!dr);
   $('chat').placeholder=dr?'정답 입력…':'채팅…';
+  $('btnRestart').textContent = mo==='alka' ? '↻ 새 판 (선공 교대)' : '↻ 새 판 (흑백 교대)';
+  if(mo!=='alka') stopAsim();
   if(dr){ $('btnRestart').classList.add('hidden'); }
   else{ $('tools').classList.add('hidden'); $('btnBegin').classList.add('hidden'); stopTimer(); } }
 function drawUiSync(){ if(MODE!=='draw') return;
@@ -396,6 +417,102 @@ function flushStroke(end){
   cl.textContent='🧹 전체 지우기'; cl.onclick=()=>{ send({t:'clear'}); clearDrawCanvas(); };
   t.appendChild(cl); })();
 $('btnBegin').onclick=()=>send({t:'begin'});
+
+/* ---- alka mode (알까기): turn player's client simulates, broadcasts result ---- */
+const AR=16, AB0=30, AB1=570;         // stone radius, board bounds (600x600 canvas)
+let asimId=null, alast=0, aim=null;   // aim: {i,x0,y0,x,y} while dragging
+function aui(){ if(MODE!=='alka')return;
+  for(const s of [1,2]){ const el=$('pl'+s), nm=el.querySelector('.nm'), st=el.querySelector('.st');
+    const p=seats&&seats[s], n=AL.stones.filter(t=>t.a&&t.o===s).length;
+    nm.textContent=p?p.name:'대기 중…';
+    st.textContent=p?((p.online?'온라인':'오프라인')+' · '+n+'개'):'';
+    el.classList.toggle('turn', !AL.winner && AL.turn===s && !!(seats[1]&&seats[2]) && AL.phase==='idle');
+    el.classList.toggle('me', myRole===s); }
+  const t=$('turnmsg'); t.className='';
+  $('btnRestart').classList.toggle('hidden', !(AL.winner&&(myRole===1||myRole===2)));
+  $('btnRestart').disabled=false;
+  if(AL.winner){ t.textContent=(AL.winner===myRole?'🏆 승리!':(myRole?'패배…':'게임 종료'))+' — '+(AL.winner===1?'흑':'백')+' 승'; t.className='win'; }
+  else if(!(seats&&seats[1]&&seats[2])) t.textContent='상대를 기다리는 중… 초대링크를 보내세요';
+  else if(AL.phase==='sim') t.textContent='돌 굴러가는 중…';
+  else if(myRole===AL.turn){ t.textContent='● 내 차례 — 내 돌을 당겨서 발사!'; t.className='me'; }
+  else t.textContent=(AL.turn===1?'흑':'백')+' 차례'+(myRole?'':' (관전)');
+}
+function alkaPhys(st,dt){              // fixed-substep integration + equal-mass elastic collisions
+  let moving=false;
+  const FR=Math.pow(0.28,dt);          // friction: velocity decays to 28%/s
+  for(const s of st){ if(!s.a) continue;
+    s.x+=s.vx*dt; s.y+=s.vy*dt; s.vx*=FR; s.vy*=FR;
+    if(Math.hypot(s.vx,s.vy)<5){ s.vx=0; s.vy=0; }
+    if(s.x<AB0-8||s.x>AB1+8||s.y<AB0-8||s.y>AB1+8){ s.a=0; s.vx=0; s.vy=0; }   // off the board
+    if(s.vx||s.vy) moving=true; }
+  for(let i=0;i<st.length;i++)for(let j=i+1;j<st.length;j++){
+    const a=st[i],b=st[j]; if(!a.a||!b.a)continue;
+    const dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy);
+    if(d>0&&d<AR*2){ const nx=dx/d,ny=dy/d,ov=(AR*2-d)/2;
+      a.x-=nx*ov; a.y-=ny*ov; b.x+=nx*ov; b.y+=ny*ov;
+      const vn=(b.vx-a.vx)*nx+(b.vy-a.vy)*ny;
+      if(vn<0){ const imp=-(1+0.92)*vn/2;
+        a.vx-=imp*nx; a.vy-=imp*ny; b.vx+=imp*nx; b.vy+=imp*ny; moving=true; } } }
+  return moving;
+}
+/* interval-driven (not rAF): keeps simulating even in hidden/throttled tabs, so the
+   flicker still sends `settle` if they background the tab mid-shot */
+function startAsim(){ if(asimId)return; alast=performance.now(); asimId=setInterval(astep,16); }
+function stopAsim(){ if(asimId){ clearInterval(asimId); asimId=null; } }
+function astep(){
+  const now=performance.now();
+  const dt=Math.min(2,(now-alast)/1000)||0.016; alast=now;   // process FULL elapsed time (throttled tabs stay real-time)
+  let moving=false; const sub=Math.max(1,Math.ceil(dt/(1/120)));
+  for(let k=0;k<sub;k++) moving=alkaPhys(AL.stones,dt/sub)||moving;
+  arender();
+  if(!moving){ stopAsim(); AL.phase='idle';
+    if(AL.mine){ AL.mine=false;
+      send({t:'settle', stones:AL.stones.map(s=>[Math.round(s.x),Math.round(s.y),s.a?1:0])}); }
+    aui(); }
+}
+function arender(){ if(MODE!=='alka')return;
+  cx.setTransform(DPR,0,0,DPR,0,0);
+  const g=cx.createLinearGradient(0,0,CSS,CSS); g.addColorStop(0,'#e2b87e'); g.addColorStop(1,'#c89554');
+  cx.fillStyle=g; cx.fillRect(0,0,CSS,CSS);
+  cx.strokeStyle='rgba(80,50,20,.35)'; cx.lineWidth=1;                   // goban-ish grid
+  for(let k=0;k<=8;k++){ const p=AB0+k*(AB1-AB0)/8;
+    cx.beginPath(); cx.moveTo(AB0,p); cx.lineTo(AB1,p); cx.stroke();
+    cx.beginPath(); cx.moveTo(p,AB0); cx.lineTo(p,AB1); cx.stroke(); }
+  cx.strokeStyle='rgba(80,50,20,.8)'; cx.lineWidth=3;                    // board edge = out line
+  cx.strokeRect(AB0,AB0,AB1-AB0,AB1-AB0);
+  for(const s of AL.stones){ if(!s.a)continue;
+    const r=AR, gr=cx.createRadialGradient(s.x-r*.35,s.y-r*.4,r*.1,s.x,s.y,r);
+    if(s.o===1){ gr.addColorStop(0,'#6a6a78'); gr.addColorStop(1,'#0a0a12'); }
+    else{ gr.addColorStop(0,'#ffffff'); gr.addColorStop(1,'#c3c7d4'); }
+    cx.fillStyle=gr; cx.beginPath(); cx.arc(s.x,s.y,r,0,7); cx.fill();
+    cx.strokeStyle='rgba(0,0,0,.35)'; cx.lineWidth=.8; cx.stroke(); }
+  if(aim){ const dx=aim.x0-aim.x, dy=aim.y0-aim.y, p=Math.hypot(dx,dy);   // slingshot arrow
+    if(p>6){ const cap=Math.min(1,p/320);
+      cx.strokeStyle=`rgba(255,${Math.round(200-120*cap)},80,.9)`; cx.lineWidth=4; cx.lineCap='round';
+      cx.beginPath(); cx.moveTo(aim.x0,aim.y0); cx.lineTo(aim.x0+dx*1.1,aim.y0+dy*1.1); cx.stroke();
+      cx.setLineDash([5,6]); cx.strokeStyle='rgba(255,255,255,.5)'; cx.lineWidth=2;
+      cx.beginPath(); cx.moveTo(aim.x0,aim.y0); cx.lineTo(aim.x,aim.y); cx.stroke(); cx.setLineDash([]); } }
+}
+cv.addEventListener('pointerdown',e=>{ if(MODE!=='alka')return;
+  if(AL.winner||AL.phase!=='idle'||myRole!==AL.turn||!(seats[1]&&seats[2]))return;
+  const [x,y]=evPt(e); let best=-1,bd=1e9;
+  AL.stones.forEach((s,i)=>{ if(!s.a||s.o!==myRole)return;
+    const d=Math.hypot(s.x-x,s.y-y); if(d<bd){bd=d;best=i;} });
+  if(best<0||bd>AR*1.8)return;
+  aim={i:best,x0:AL.stones[best].x,y0:AL.stones[best].y,x,y};
+  try{cv.setPointerCapture(e.pointerId);}catch(err){} e.preventDefault(); arender(); });
+cv.addEventListener('pointermove',e=>{ if(MODE!=='alka'||!aim)return;
+  const [x,y]=evPt(e); aim.x=x; aim.y=y; arender(); });
+function flickStone(i,vx,vy){                    // my shot: local sim is authoritative -> settle
+  const s=AL.stones[i]; if(!s||!s.a)return;
+  s.vx=vx; s.vy=vy; AL.phase='sim'; AL.mine=true;
+  send({t:'flick',i,vx:Math.round(vx),vy:Math.round(vy)});
+  startAsim(); aui(); }
+['pointerup','pointercancel'].forEach(ev=>cv.addEventListener(ev,()=>{ if(MODE!=='alka'||!aim)return;
+  const dx=aim.x0-aim.x, dy=aim.y0-aim.y, p=Math.hypot(dx,dy), i=aim.i; aim=null;
+  if(p<12){ arender(); return; }
+  const v=Math.min(1200,p*3.2);
+  flickStone(i, dx/p*v, dy/p*v); }));
 
 /* auto-join via #CODE (last: everything above must be initialized) */
 (function(){ const h=location.hash.replace('#','').toUpperCase();
