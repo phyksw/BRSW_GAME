@@ -35,6 +35,12 @@ input[type=text]:focus{border-color:rgba(18,181,166,.6)}
 .btn:hover{background:#e3e8f1}
 .btn.primary{background:linear-gradient(135deg,#17c7b2,#0fa093);border:none;color:#fff;box-shadow:0 6px 16px -8px rgba(18,181,166,.55)}
 .btn.coral{background:linear-gradient(135deg,#ff8a76,#f4604f);border:none;color:#fff;box-shadow:0 6px 16px -8px rgba(255,107,94,.55)}
+.btn.mango{background:linear-gradient(135deg,#ffc06a,#f59e0b);border:none;color:#fff;box-shadow:0 6px 16px -8px rgba(245,158,11,.55)}
+.btn.mango:hover{filter:brightness(1.05);background:linear-gradient(135deg,#ffc06a,#f59e0b)}
+.btn.leave{background:#fff1ef;border:1.5px solid rgba(255,107,94,.55);color:#e2544a}
+.btn.leave:hover{background:#ffe4e0}
+.btn.tealout{background:#ecf9f7;border:1.5px solid rgba(18,181,166,.5);color:#0d9488}
+.btn.tealout:hover{background:#dcf3ef}
 .btn:disabled{opacity:.45;cursor:not-allowed;filter:none}
 .row{display:flex;gap:9px}.row>*{flex:1}
 .games{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:14px 0 18px}
@@ -110,7 +116,7 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
 </head>
 <body>
 <div class="wrap">
-  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.15</span></header>
+  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.16</span></header>
 
   <!-- lobby -->
   <div id="lobby" class="card">
@@ -127,7 +133,7 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
     <div class="field"><label>방 코드 (입장할 때만)</label><input type="text" id="code" maxlength="8" placeholder="예: A3K9F" style="text-transform:uppercase"></div>
     <div class="row">
       <button class="btn primary" id="btnNew">+ 새 방 만들기</button>
-      <button class="btn" id="btnJoin">방 입장</button>
+      <button class="btn tealout" id="btnJoin">방 입장</button>
     </div>
   </div>
 
@@ -136,7 +142,7 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
     <div class="card boardcard">
       <div class="topbar">
         <span class="codechip"><small>ROOM</small> <span id="roomcode"></span></span>
-        <button class="btn" id="btnCopy" style="padding:7px 12px;font-size:12px">🔗 초대링크 복사</button>
+        <button class="btn tealout" id="btnCopy" style="padding:7px 12px;font-size:12px">🔗 초대링크 복사</button>
         <span id="turnmsg"></span>
       </div>
       <div class="wordbar hidden" id="wordbar"><span id="wordtxt"></span><span id="timer"></span></div>
@@ -145,12 +151,12 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
       <div class="tools hidden" id="tpad"></div>
       <div class="row" style="width:100%">
         <button class="btn primary hidden" id="btnBegin">🎨 라운드 시작</button>
-        <button class="btn hidden" id="btnSolo">🙋 혼자 두기 (양쪽 조작)</button>
+        <button class="btn mango hidden" id="btnSolo">🙋 혼자 두기 (양쪽 조작)</button>
         <div class="wob hidden" id="wobBox">🎯 삑
           <input type="range" id="wobRange" min="0" max="15" step="1" value="0">
           <span id="wobVal">정확</span></div>
         <button class="btn coral hidden" id="btnRestart">↻ 새 판 (흑백 교대)</button>
-        <button class="btn" id="btnLeave" style="flex:0 0 auto">나가기</button>
+        <button class="btn leave" id="btnLeave" style="flex:0 0 auto">🚪 나가기</button>
       </div>
     </div>
     <div class="card side">
