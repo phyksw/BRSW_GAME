@@ -43,6 +43,9 @@ input[type=text]:focus{border-color:rgba(18,181,166,.6)}
 .btn.tealout:hover{background:#dcf3ef}
 .btn:disabled{opacity:.45;cursor:not-allowed;filter:none}
 .row{display:flex;gap:9px}.row>*{flex:1}
+.row.actions{flex-wrap:wrap}
+.row.actions>*{flex:0 1 auto}
+.row.actions .btn{padding:9px 14px}
 .games{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:14px 0 18px}
 .gitem{display:flex;align-items:center;gap:9px;background:#fff;border:1.5px solid var(--line);
   border-radius:14px;padding:11px 13px;font-size:13px;font-weight:700;box-shadow:0 4px 12px -8px rgba(35,48,74,.15)}
@@ -99,9 +102,9 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
   border-radius:8px;background:#fff;border:1px solid rgba(18,181,166,.45);color:var(--cyan);cursor:pointer}
 .pl .pj:hover{filter:brightness(1.2)}
 /* alka 삑 slider */
-.wob{display:flex;align-items:center;gap:8px;background:#eef1f7;border:1.5px solid #cdd5e3;
-  border-radius:12px;padding:8px 13px;font-size:12.5px;font-weight:800;color:var(--text);white-space:nowrap}
-.wob input[type=range]{width:110px;accent-color:var(--coral);cursor:pointer}
+.wob{display:flex;align-items:center;gap:7px;background:#eef1f7;border:1.5px solid #cdd5e3;
+  border-radius:12px;padding:6px 11px;font-size:12.5px;font-weight:800;color:var(--text);white-space:nowrap}
+.wob input[type=range]{width:88px;accent-color:var(--coral);cursor:pointer}
 .wob input[type=range]:disabled{opacity:.4;cursor:not-allowed}
 .wob #wobVal{min-width:38px;color:var(--coral)}
 .wob.locked{opacity:.65}
@@ -116,7 +119,7 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
 </head>
 <body>
 <div class="wrap">
-  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.16</span></header>
+  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.17</span></header>
 
   <!-- lobby -->
   <div id="lobby" class="card">
@@ -149,14 +152,14 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
       <canvas id="board" width="600" height="600"></canvas>
       <div class="tools hidden" id="tools"></div>
       <div class="tools hidden" id="tpad"></div>
-      <div class="row" style="width:100%">
+      <div class="row actions" style="width:100%">
         <button class="btn primary hidden" id="btnBegin">🎨 라운드 시작</button>
-        <button class="btn mango hidden" id="btnSolo">🙋 혼자 두기 (양쪽 조작)</button>
+        <button class="btn mango hidden" id="btnSolo" title="상대 없이 혼자 양쪽을 다 조작합니다">🙋 혼자 두기</button>
         <div class="wob hidden" id="wobBox">🎯 삑
           <input type="range" id="wobRange" min="0" max="15" step="1" value="0">
           <span id="wobVal">정확</span></div>
-        <button class="btn coral hidden" id="btnRestart">↻ 새 판 (흑백 교대)</button>
-        <button class="btn leave" id="btnLeave" style="flex:0 0 auto">🚪 나가기</button>
+        <button class="btn coral hidden" id="btnRestart" title="흑백(선공)을 교대해서 새 판을 시작합니다">↻ 새 판</button>
+        <button class="btn leave" id="btnLeave" style="margin-left:auto">🚪 나가기</button>
       </div>
     </div>
     <div class="card side">
@@ -498,7 +501,8 @@ function setMode(mo){ MODE=mo;
   $('pl1').classList.toggle('hidden',!two); $('pl2').classList.toggle('hidden',!two);
   $('scores').classList.toggle('hidden',!multi); $('wordbar').classList.toggle('hidden',!multi);
   $('chat').placeholder=mo==='draw'?'정답 입력…':'채팅…';
-  $('btnRestart').textContent = mo==='alka' ? '↻ 새 판 (선공 교대)' : '↻ 새 판 (흑백 교대)';
+  $('btnRestart').textContent='↻ 새 판';
+  $('btnRestart').title = mo==='alka' ? '선공을 교대해서 새 판을 시작합니다' : '흑백을 교대해서 새 판을 시작합니다';
   if(mo!=='alka') stopAsim();
   if(mo!=='beat') stopBeat();
   if(mo!=='draw') stopTimer();
@@ -1065,6 +1069,14 @@ cv.addEventListener('pointercancel',()=>{ if(MODE==='tet') tetG=null; });
   mk2('◀',()=>tetMove(-1)); mk2('▼',()=>tetSoft()); mk2('▶',()=>tetMove(1));
   mk2('⟲',()=>tetRot(-1)); mk2('⟳',()=>tetRot(1)); mk2('⏬',()=>tetHard()); })();
 initTet();
+
+/* browser back/forward: leaving the room hash exits to the lobby; a room hash (re)enters */
+window.addEventListener('hashchange',()=>{
+  const h=location.hash.replace('#','').toUpperCase();
+  const valid=/^[A-Z0-9]{4,8}$/.test(h)&&$('nick').value.trim();
+  if(inGame){ if(h!==room){ leave(); if(valid) enter(h); } }
+  else if(valid) enter(h);
+});
 
 /* auto-join via #CODE (last: everything above must be initialized) */
 (function(){ const h=location.hash.replace('#','').toUpperCase();
