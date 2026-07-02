@@ -102,7 +102,7 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
 </head>
 <body>
 <div class="wrap">
-  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.10</span></header>
+  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.11</span></header>
 
   <!-- lobby -->
   <div id="lobby" class="card">
@@ -399,11 +399,12 @@ function faceStone(x,y,r,side,exp,alpha){        // side 1=black tiger, 2=white 
   cx.beginPath(); cx.arc(x,y+r*0.18,r*0.92,0,7);  // soft ground shadow
   cx.fillStyle='rgba(50,35,15,.22)'; cx.fill();
   if(STONE_IMG.complete&&STONE_IMG.naturalWidth){
+    // preprocessed sheet: transparent bg, 128px cells, disc pinned at (64,64) with diameter 100
     const cw=STONE_IMG.naturalWidth/6, ch2=STONE_IMG.naturalHeight/4;
     const row=(side===2?0:2)+((exp/6)|0), col=exp%6;
-    const k=(2*r)/(0.84*Math.min(cw,ch2));        // sprite circle ≈ 84% of cell -> map onto 2r
-    cx.beginPath(); cx.arc(x,y,r*1.03,0,7); cx.clip();
-    cx.drawImage(STONE_IMG, col*cw, row*ch2, cw, ch2, x-cw*k/2, y-ch2*k/2, cw*k, ch2*k);
+    const s=(2*r)/100*(128/cw);                   // dest px per sprite px (disc -> 2r)
+    cx.drawImage(STONE_IMG, col*cw, row*ch2, cw, ch2,
+                 x-64*s*(cw/128), y-64*s*(ch2/128), cw*s*(cw/128), ch2*s*(ch2/128));
   } else {                                        // sprite not loaded yet -> plain stone
     const gr=cx.createRadialGradient(x-r*.35,y-r*.4,r*.1,x,y,r);
     if(side===1){ gr.addColorStop(0,'#6a6a78'); gr.addColorStop(1,'#0a0a12'); }
