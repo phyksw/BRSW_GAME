@@ -103,7 +103,7 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
 </head>
 <body>
 <div class="wrap">
-  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.13</span></header>
+  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.14</span></header>
 
   <!-- lobby -->
   <div id="lobby" class="card">
@@ -425,22 +425,23 @@ function stone(x,y,v){
   cx.fillStyle=gr; cx.beginPath(); cx.arc(x,y,r,0,7); cx.fill();
   cx.strokeStyle='rgba(0,0,0,.35)'; cx.lineWidth=.8; cx.stroke();
 }
-/* ---- tiger character stones (6x4 sprite: rows 0-1 white, 2-3 black; no alpha -> circular clip) ---- */
+/* ---- tiger character stones (5x6 sprite: rows 0-2 white, 3-5 black; chroma-keyed, head pinned
+        at cell center (64,64) with width 104) ---- */
 const STONE_IMG=new Image(); STONE_IMG.src='img/stones.png';
 STONE_IMG.onload=()=>{ if(MODE==='omok')draw(); else if(MODE==='alka')arender(); };
-const EXP={neutral:0,grin:1,laugh:2,wink:3,wow:4,calm:5,cry:6,steam:7,grit:8,sleep:9,love:10,shine:11};
+const EXP={neutral:0,grin:1,wow:2,steam:3,sleep:4,cry:5,grit:6,sad:7,shine:8,calm:9,
+           wink:10,dizzy:11,laugh:12,puff:13,love:14};
 function faceStone(x,y,r,side,exp,alpha){        // side 1=black tiger, 2=white tiger
   cx.save();
   if(alpha!=null) cx.globalAlpha*=alpha;
   cx.beginPath(); cx.arc(x,y+r*0.18,r*0.92,0,7);  // soft ground shadow
   cx.fillStyle='rgba(50,35,15,.22)'; cx.fill();
   if(STONE_IMG.complete&&STONE_IMG.naturalWidth){
-    // preprocessed sheet: transparent bg, 128px cells, disc pinned at (64,64) with diameter 100
-    const cw=STONE_IMG.naturalWidth/6, ch2=STONE_IMG.naturalHeight/4;
-    const row=(side===2?0:2)+((exp/6)|0), col=exp%6;
-    const s=(2*r)/100*(128/cw);                   // dest px per sprite px (disc -> 2r)
-    cx.drawImage(STONE_IMG, col*cw, row*ch2, cw, ch2,
-                 x-64*s*(cw/128), y-64*s*(ch2/128), cw*s*(cw/128), ch2*s*(ch2/128));
+    // preprocessed sheet: transparent bg, 128px cells, head pinned at (64,64) with width 104
+    const cw=STONE_IMG.naturalWidth/5, ch2=STONE_IMG.naturalHeight/6;
+    const row=(side===2?0:3)+((exp/5)|0), col=exp%5;
+    const s=(2*r)/104;                            // dest px per sprite px (head width -> 2r)
+    cx.drawImage(STONE_IMG, col*cw, row*ch2, cw, ch2, x-64*s, y-64*s, cw*s, ch2*s);
   } else {                                        // sprite not loaded yet -> plain stone
     const gr=cx.createRadialGradient(x-r*.35,y-r*.4,r*.1,x,y,r);
     if(side===1){ gr.addColorStop(0,'#6a6a78'); gr.addColorStop(1,'#0a0a12'); }
