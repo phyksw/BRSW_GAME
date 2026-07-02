@@ -103,7 +103,7 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
 </head>
 <body>
 <div class="wrap">
-  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.12</span></header>
+  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.13</span></header>
 
   <!-- lobby -->
   <div id="lobby" class="card">
@@ -306,9 +306,11 @@ function handle(m){
     TET.board=Array.from({length:20},()=>Array(10).fill(0));
     refillTetBag(); spawnTet();
     $('btnBegin').classList.add('hidden'); $('tpad').classList.remove('hidden');
-    renderTetScores(); log('sys',`라운드 ${m.roundN} 시작! ←→ 이동 · ↑/X 회전 · Z 역회전 · ↓ 소프트 · Space 하드드롭`);
+    renderTetScores(); log('sys',`라운드 ${m.roundN} 시작! ⌨ ←→/AD 이동 · ↑/W/X 회전 · Z 역회전 · ↓/S 소프트 · Space/Enter 하드 | 📱 드래그 이동 · 탭 회전 · 아래로 휙 하드드롭`);
     startTetLoop(); return; }
-  if(m.t==='tscore'){ if(MODE!=='tet'||!TET)return; TET.live[m.name]={s:m.s,l:m.l}; return; }
+  if(m.t==='tscore'){ if(MODE!=='tet'||!TET)return;
+    const prev=TET.live[m.name]||{};
+    TET.live[m.name]={s:m.s,l:m.l,b:(m.b&&m.b.length>=60)?m.b:prev.b}; return; }
   if(m.t==='tgarb'){ if(MODE!=='tet'||!TET||TET.over||TET.phase!=='playing'||!TET.board)return;
     TET.pend=Math.min(8,TET.pend+(m.n|0)); log('sys',`💣 ${m.from} → 가비지 ${m.n}줄 공격!`); return; }
   if(m.t==='tres'){ if(MODE!=='tet')return; stopTet(); TET.phase='lobby'; TET.over=false;
@@ -759,6 +761,8 @@ function hitLane(l){ const B=BEAT; if(MODE!=='beat'||!B||B.phase!=='playing'||B.
   B.judge={j,at:performance.now()}; B.dirty=true; blip(pts); }
 document.addEventListener('keydown',e=>{ ensureAudio();
   if(MODE!=='beat'||!BEAT||BEAT.phase!=='playing'||e.repeat)return;
+  const ae=document.activeElement;
+  if(ae&&(ae.tagName==='INPUT'||ae.tagName==='TEXTAREA'))return;
   const l={KeyD:0,KeyF:1,KeyJ:2,KeyK:3}[e.code]; if(l==null)return;
   e.preventDefault(); hitLane(l); });
 cv.addEventListener('pointerdown',e=>{ if(MODE!=='beat')return; ensureAudio();
@@ -898,7 +902,8 @@ function tetLock(){ const c=TET.cur; let died=false;
   let cleared=0;
   for(let y=19;y>=0;y--){ if(TET.board[y].every(v=>v)){ TET.board.splice(y,1);
     TET.board.unshift(Array(10).fill(0)); cleared++; y++; } }
-  if(cleared){ TET.score+=[0,100,300,500,800][cleared]*tetLevel(); TET.lines+=cleared; TET.dirty=true;
+  TET.dirty=true;                                // board changed -> opponents' mini view needs it
+  if(cleared){ TET.score+=[0,100,300,500,800][cleared]*tetLevel(); TET.lines+=cleared;
     const out=[0,0,1,2,4][cleared]; if(out) send({t:'tgarb',n:out}); }
   // apply pending garbage (gray rows with one hole)
   if(TET.pend>0){ for(let k=0;k<TET.pend;k++){ TET.board.shift();
@@ -911,6 +916,10 @@ function tetTopOut(){ if(TET.over)return; TET.over=true; TET.cur=null;
   $('wordtxt').textContent='💀 탈락! — '+TET.score+'점 · '+TET.lines+'줄 · 다른 플레이어 대기 중';
   $('tpad').classList.add('hidden'); trender(); }
 function songTet(){ return performance.now()-TET.perfStart; }
+function packTetBoard(){ let s='';                // 20 rows -> 3 hex digits each (10 bits)
+  for(let y=0;y<20;y++){ let v=0; for(let x=0;x<10;x++) if(TET.board[y][x]) v|=1<<x;
+    s+=v.toString(16).padStart(3,'0'); }
+  return s; }
 function startTetLoop(){ stopTet(); TET.acc=0; TET.lastT=performance.now(); TET.loop=setInterval(tetTick,30); }
 function tetTick(){ const T=TET; if(!T||T.phase!=='playing'){ stopTet(); return; }
   const st=songTet(), now=performance.now(), dt=Math.min(500,now-T.lastT); T.lastT=now;
@@ -924,7 +933,8 @@ function tetTick(){ const T=TET; if(!T||T.phase!=='playing'){ stopTet(); return;
   if(!T.over){ $('wordtxt').textContent='🧱 '+T.score+'점 · '+T.lines+'줄 · Lv'+tetLevel();
     const s2=(st/1000)|0; $('timer').textContent=((s2/60)|0)+':'+String(s2%60).padStart(2,'0'); }
   const pn=performance.now();
-  if(pn-T.lastSend>600&&T.dirty){ T.dirty=false; T.lastSend=pn; send({t:'tscore',s:T.score,l:T.lines}); }
+  if(pn-T.lastSend>600&&T.dirty){ T.dirty=false; T.lastSend=pn;
+    send({t:'tscore',s:T.score,l:T.lines,b:packTetBoard()}); }
   if(pn-T.lastBoard>500){ T.lastBoard=pn; renderTetScores(); } }
 function trenderIdle(){ cx.setTransform(DPR,0,0,DPR,0,0);
   cx.fillStyle='#0c1120'; cx.fillRect(0,0,CSS,CSS);
@@ -959,6 +969,24 @@ function trender(){ const T=TET; if(MODE!=='tet'||!T||!T.board)return;
   cx.fillText(T.lines+'줄 · Lv'+tetLevel(),150,82);
   if(T.pend>0){ cx.fillStyle='#ff6f61'; cx.font='800 17px Pretendard,sans-serif';
     cx.fillText('⚠ 가비지 +'+T.pend,150,116); }
+  // opponents' live mini boards (right column, up to 4)
+  const me2=$('nick').value.trim().slice(0,12);
+  const opps=(T.players||[]).filter(p=>p.name!==me2&&p.playing!==false)
+    .map(p=>({name:p.name, s:(T.live[p.name]?T.live[p.name].s:p.score)|0,
+              b:T.live[p.name]&&T.live[p.name].b, fin:!!p.finished}))
+    .sort((a,b2)=>b2.s-a.s).slice(0,4);
+  opps.forEach((o,i)=>{ const bx=455+(i%2)*72, by=268+((i/2)|0)*146;
+    cx.fillStyle='#080d18'; cx.fillRect(bx,by,50,100);
+    cx.strokeStyle=o.fin?'rgba(255,111,97,.7)':'rgba(140,170,220,.28)'; cx.lineWidth=1;
+    cx.strokeRect(bx,by,50,100);
+    if(o.b&&o.b.length>=60){ cx.fillStyle='#6e8fc0';
+      for(let y2=0;y2<20;y2++){ const v=parseInt(o.b.slice(y2*3,y2*3+3),16);
+        for(let x2=0;x2<10;x2++) if(v&(1<<x2)) cx.fillRect(bx+x2*5,by+y2*5,4,4); } }
+    if(o.fin){ cx.fillStyle='rgba(5,8,16,.55)'; cx.fillRect(bx,by,50,100);
+      cx.font='18px sans-serif'; cx.textAlign='center'; cx.fillText('💀',bx+25,by+58); }
+    cx.fillStyle='rgba(159,178,207,.9)'; cx.font='700 10px Pretendard,sans-serif'; cx.textAlign='center';
+    cx.fillText(o.name.slice(0,6),bx+25,by+113);
+    cx.fillText(String(o.s),bx+25,by+126); });
   const st=songTet();
   if(st<0){ cx.fillStyle='#fff'; cx.font='800 72px Pretendard,sans-serif'; cx.textAlign='center';
     cx.fillText(String(Math.ceil(-st/1000)),300,300); }
@@ -978,13 +1006,33 @@ function renderTetScores(){ if(MODE!=='tet'||!TET)return; const el=$('scores'); 
     d2.appendChild(nm); d2.appendChild(pt); el.appendChild(d2); }); }
 document.addEventListener('keydown',e=>{ if(MODE!=='tet'||!TET||TET.phase!=='playing'||TET.over||!TET.cur)return;
   if(songTet()<0)return;
+  const ae=document.activeElement;
+  if(ae&&(ae.tagName==='INPUT'||ae.tagName==='TEXTAREA'))return;   // typing in chat, not playing
   const k=e.code;
-  if(k==='ArrowLeft'){ e.preventDefault(); tetMove(-1); }
-  else if(k==='ArrowRight'){ e.preventDefault(); tetMove(1); }
-  else if(k==='ArrowDown'){ e.preventDefault(); tetSoft(); }
-  else if(k==='ArrowUp'||k==='KeyX'){ e.preventDefault(); tetRot(1); }
+  if(k==='ArrowLeft'||k==='KeyA'){ e.preventDefault(); tetMove(-1); }
+  else if(k==='ArrowRight'||k==='KeyD'){ e.preventDefault(); tetMove(1); }
+  else if(k==='ArrowDown'||k==='KeyS'){ e.preventDefault(); tetSoft(); }
+  else if(k==='ArrowUp'||k==='KeyW'||k==='KeyX'){ e.preventDefault(); tetRot(1); }
   else if(k==='KeyZ'){ e.preventDefault(); tetRot(-1); }
-  else if(k==='Space'){ e.preventDefault(); tetHard(); } });
+  else if(k==='Space'||k==='Enter'||k==='NumpadEnter'){ e.preventDefault(); tetHard(); } });
+/* mobile SOTA gestures: drag = move / slow drag down = soft / fast flick down = hard / tap = rotate */
+let tetG=null;
+cv.addEventListener('pointerdown',e=>{ if(MODE!=='tet'||!TET||TET.phase!=='playing'||TET.over||!TET.cur||songTet()<0)return;
+  const [x,y]=evPt(e); tetG={x0:x,y0:y,t0:performance.now(),lx:x,ly:y,acted:false};
+  try{cv.setPointerCapture(e.pointerId);}catch(err){} e.preventDefault(); });
+cv.addEventListener('pointermove',e=>{ if(MODE!=='tet'||!tetG||!TET.cur)return;
+  const [x,y]=evPt(e);
+  while(x-tetG.lx>26){ tetMove(1); tetG.lx+=26; tetG.acted=true; }
+  while(tetG.lx-x>26){ tetMove(-1); tetG.lx-=26; tetG.acted=true; }
+  while(y-tetG.ly>32){ tetSoft(); tetG.ly+=32; tetG.acted=true; }
+  if(y<tetG.ly) tetG.ly=y; });
+cv.addEventListener('pointerup',e=>{ if(MODE!=='tet'||!tetG)return;
+  const g2=tetG; tetG=null; if(!TET.cur)return;
+  const [x,y]=evPt(e), dt2=performance.now()-g2.t0, dy=y-g2.y0, dx=Math.abs(x-g2.x0);
+  if(dy>90&&dy>dx*1.5&&dy/dt2>0.6){ tetHard(); return; }          // fast downward flick
+  if(!g2.acted&&dt2<300&&dx<12&&Math.abs(dy)<12){                  // tap: left third CCW, else CW
+    if(x<200) tetRot(-1); else tetRot(1); } });
+cv.addEventListener('pointercancel',()=>{ if(MODE==='tet') tetG=null; });
 (function buildTpad(){ const t=$('tpad');
   const mk2=(txt,fn)=>{ const b=document.createElement('button'); b.type='button'; b.className='btn';
     b.style.cssText='padding:9px 0;font-size:16px;flex:1';

@@ -366,13 +366,15 @@ export class GameRoom {
       }
       return;
     }
-    if (m.t === 'tscore') {                       // tet: live score/lines relay
+    if (m.t === 'tscore') {                       // tet: live score/lines/board relay
       if (g.mode !== 'tet' || !g.tt || g.tt.phase !== 'playing') return;
       const p = g.tt.players[att.token];
       if (!p || !p.playing || p.finished) return;
       p.score = Math.max(0, Math.min(9_999_999, m.s | 0));
       p.lines = Math.max(0, Math.min(9999, m.l | 0));
-      this.bcast({ t: 'tscore', name: att.name, s: p.score, l: p.lines }, ws);
+      let b = '';                                 // 20 rows x 3 hex = compact board snapshot (not persisted)
+      if (typeof m.b === 'string' && m.b.length <= 60 && /^[0-9a-f]*$/.test(m.b)) b = m.b;
+      this.bcast({ t: 'tscore', name: att.name, s: p.score, l: p.lines, b }, ws);
       return;
     }
     if (m.t === 'tgarb') {                        // tet: garbage attack -> everyone else
@@ -391,6 +393,7 @@ export class GameRoom {
       p.score = Math.max(0, Math.min(9_999_999, m.s | 0));
       p.lines = Math.max(0, Math.min(9999, m.l | 0));
       await this.save();
+      this.bcast({ t: 'players', players: this.tetPub(tt) });   // 💀 shows up on opponents' mini boards
       const waiting = tt.order.filter(t => tt.players[t].playing && tt.players[t].online && !tt.players[t].finished);
       if (!waiting.length) await this.tetResults(g);
       return;
