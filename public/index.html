@@ -103,7 +103,7 @@ button.gitem{font-family:var(--sans);color:var(--text);text-align:left;cursor:po
       <button type="button" class="gitem on sel" data-mode="omok">⚫ 오목 <span class="soon">PLAY</span></button>
       <button type="button" class="gitem on" data-mode="draw">🎨 그림그리기 <span class="soon">PLAY</span></button>
       <button type="button" class="gitem on" data-mode="alka">🥌 알까기 <span class="soon">PLAY</span></button>
-      <div class="gitem">🎵 리듬 <span class="soon">준비중</span></div>
+      <button type="button" class="gitem on" data-mode="beat">🎵 리듬 <span class="soon">PLAY</span></button>
       <div class="gitem">🗺️ 땅따먹기 <span class="soon">준비중</span></div>
     </div>
     <div class="field"><label>닉네임</label><input type="text" id="nick" maxlength="12" placeholder="예: 김선장"></div>
@@ -160,7 +160,8 @@ let ws=null, room=null, myRole=0, board=new Array(CELLS).fill(0),
 let MODE='omok', selMode='omok', timerIv=null,
     DRAW={phase:'lobby',roundEnd:0,youDrawer:false,word:null,mask:''},
     tool={c:0,w:4},
-    AL={stones:[],turn:1,winner:0,phase:'idle',auth:'[]',mine:false};
+    AL={stones:[],turn:1,winner:0,phase:'idle',auth:'[]',mine:false},
+    BEAT=null;   // set by initBeat()
 
 /* ---- lobby ---- */
 const CODE_CHARS='ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -181,6 +182,7 @@ function enter(code){ room=code; location.hash=code; inGame=true;
   seats={1:null,2:null}; myRole=0; retry=0; clearReconn(); $('log').innerHTML='';
   DRAW={phase:'lobby',roundEnd:0,youDrawer:false,word:null,mask:''};
   AL={stones:[],turn:1,winner:0,phase:'idle',auth:'[]',mine:false}; stopAsim();
+  initBeat(); stopBeat();
   setMode(selMode);                              // provisional; the server state message corrects it
   $('lobby').classList.add('hidden'); $('game').classList.remove('hidden');
   $('roomcode').textContent=code; ui(); connect(); draw(); if(MODE==='draw') clearDrawCanvas(); }
@@ -229,7 +231,7 @@ function handle(m){
     renderScores(m.players); drawUiSync();
     log('sys',`⏰ 정답은 「${m.word}」${m.reason==='all'?' — 전원 정답!':m.reason==='drawer-left'?' (출제자 퇴장)':''}`); return; }
   if(m.t==='phase'){ DRAW.phase=m.phase; if(m.players)renderScores(m.players); drawUiSync(); return; }
-  if(m.t==='players'){ renderScores(m.players); return; }
+  if(m.t==='players'){ if(MODE==='beat'&&BEAT){ BEAT.players=m.players||[]; renderBeatBoard(); } else renderScores(m.players); return; }
   /* ---- alka ---- */
   if(m.t==='state'&&m.mode==='alka'){ setMode('alka'); stopAsim();
     seats=m.seats; myRole=m.role;
@@ -247,6 +249,28 @@ function handle(m){
   if(m.t==='abort'){ if(MODE!=='alka')return; stopAsim();
     JSON.parse(AL.auth).forEach((s,k)=>{ const t=AL.stones[k]; if(t){ t.x=s.x; t.y=s.y; t.a=s.a; t.vx=0; t.vy=0; } });
     AL.phase='idle'; AL.mine=false; aui(); arender(); return; }
+  /* ---- beat ---- */
+  if(m.t==='state'&&m.mode==='beat'){ setMode('beat'); initBeat();
+    BEAT.players=m.players||[];
+    if(m.phase==='playing'){ const off=m.now-Date.now();
+      BEAT.late=true; BEAT.phase='spectate';
+      $('wordtxt').textContent='라운드 진행 중 — 다음 라운드에 참여하세요'; renderBeatBoard(); }
+    else { BEAT.phase='lobby'; beatLobbyUi(); }
+    log('sys','🎵 리듬 — 같은 비트, 누가 더 정확할까!'); return; }
+  if(m.t==='bstart'){ if(MODE!=='beat')return; initBeat();
+    BEAT.players=m.players||[];
+    const off=m.now-Date.now();                     // server clock offset (± half RTT)
+    BEAT.perfStart=performance.now()+(m.startAt-off-Date.now());
+    BEAT.chart=genChart(m.seed); BEAT.phase='playing'; BEAT.roundN=m.roundN;
+    $('btnBegin').classList.add('hidden');
+    log('sys',`라운드 ${m.roundN} 시작! (BPM ${BEAT.chart.bpm}·노트 ${BEAT.chart.notes.length}개) D·F·J·K 또는 터치`);
+    startBeat(); return; }
+  if(m.t==='bscore'){ if(MODE!=='beat'||!BEAT)return; BEAT.live[m.name]={s:m.s,c:m.c}; return; }
+  if(m.t==='bres'){ if(MODE!=='beat')return; stopBeat(); BEAT.phase='lobby';
+    const medals=['🥇','🥈','🥉'];
+    (m.list||[]).forEach((p,i)=>log('sys',`${medals[i]||(i+1)+'.'} ${p.name} — ${p.score}점 · 최대콤보 ${p.maxCombo} · 정확도 ${p.acc}%`));
+    BEAT.players=(m.list||[]).map(p=>({name:p.name,score:p.score,maxCombo:p.maxCombo,online:true}));
+    beatLobbyUi(); return; }
   /* ---- omok ---- */
   if(m.t==='state'){ setMode('omok'); board=m.board.split('').map(Number); turn=m.turn; winner=m.winner;
     winLine=m.winLine; seats=m.seats; myRole=m.role;
@@ -349,14 +373,19 @@ cv.addEventListener('click',e=>{ if(MODE!=='omok')return; const i=cellAt(e);
 
 /* ---- draw mode (그림그리기) ---- */
 const DCOL=['#111827','#e02d2d','#2563eb','#16a34a','#f59e0b','#9333ea','#8b5a2b','#ffffff'];
-function setMode(mo){ MODE=mo; const dr=mo==='draw';
-  $('pl1').classList.toggle('hidden',dr); $('pl2').classList.toggle('hidden',dr);
-  $('scores').classList.toggle('hidden',!dr); $('wordbar').classList.toggle('hidden',!dr);
-  $('chat').placeholder=dr?'정답 입력…':'채팅…';
+function setMode(mo){ MODE=mo;
+  const two = mo==='omok'||mo==='alka';           // 2-seat games use the pl1/pl2 panels
+  const multi = mo==='draw'||mo==='beat';         // everyone-plays games use scores + wordbar
+  $('pl1').classList.toggle('hidden',!two); $('pl2').classList.toggle('hidden',!two);
+  $('scores').classList.toggle('hidden',!multi); $('wordbar').classList.toggle('hidden',!multi);
+  $('chat').placeholder=mo==='draw'?'정답 입력…':'채팅…';
   $('btnRestart').textContent = mo==='alka' ? '↻ 새 판 (선공 교대)' : '↻ 새 판 (흑백 교대)';
   if(mo!=='alka') stopAsim();
-  if(dr){ $('btnRestart').classList.add('hidden'); }
-  else{ $('tools').classList.add('hidden'); $('btnBegin').classList.add('hidden'); stopTimer(); } }
+  if(mo!=='beat') stopBeat();
+  if(mo!=='draw') stopTimer();
+  $('btnBegin').textContent = mo==='beat' ? '🎵 라운드 시작' : '🎨 라운드 시작';
+  $('tools').classList.add('hidden'); $('btnBegin').classList.add('hidden');
+  if(multi) $('btnRestart').classList.add('hidden'); }
 function drawUiSync(){ if(MODE!=='draw') return;
   const d=DRAW, ing=d.phase==='drawing';
   $('tools').classList.toggle('hidden', !(ing&&d.youDrawer));
@@ -513,6 +542,155 @@ function flickStone(i,vx,vy){                    // my shot: local sim is author
   if(p<12){ arender(); return; }
   const v=Math.min(1200,p*3.2);
   flickStone(i, dx/p*v, dy/p*v); }));
+
+/* ---- beat mode (리듬): local judgment, scores relayed ---- */
+function initBeat(){ if(BEAT&&BEAT.loop) clearInterval(BEAT.loop);
+  BEAT={phase:'lobby',players:[],live:{},chart:null,perfStart:0,roundN:0,
+        score:0,sum:0,combo:0,maxCombo:0,next:0,judge:null,press:[0,0,0,0],
+        loop:null,lastSend:0,lastBoard:0,dirty:false,finished:false,audioBeat:0,late:false}; }
+function stopBeat(){ if(BEAT&&BEAT.loop){ clearInterval(BEAT.loop); BEAT.loop=null; } }
+function startBeat(){ stopBeat(); BEAT.loop=setInterval(beatTick,16); }
+function songTime(){ return performance.now()-BEAT.perfStart; }
+function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a);
+  t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+function genChart(seed){ const rnd=mulberry32(seed), bpm=120+Math.floor(rnd()*5)*4, beat=60000/bpm;
+  const D=45000, notes=[], last=[-9e9,-9e9,-9e9,-9e9];
+  let t=2500;
+  while(t<D-1200){
+    const div=rnd()<0.55?2:1;
+    for(let s=0;s<div;s++){ const tt=Math.round(t+s*beat/div);
+      const density=0.45+0.4*Math.min(1,tt/D*1.5);
+      if(rnd()<density){ let l=Math.floor(rnd()*4);
+        if(tt-last[l]<240) l=(l+1)%4;
+        if(tt-last[l]>=240){ notes.push({t:tt,l}); last[l]=tt;
+          if(tt>D*0.55&&rnd()<0.1){ const l2=(l+2)%4;
+            if(tt-last[l2]>=240){ notes.push({t:tt,l:l2}); last[l2]=tt; } } } } }
+    t+=beat; }
+  notes.sort((a,b)=>a.t-b.t||a.l-b.l);
+  return {bpm,notes,duration:D}; }
+function beatLobbyUi(){ if(MODE!=='beat')return;
+  $('wordtxt').textContent='🎵 준비되면 시작! (D·F·J·K / 터치 4레인)'; $('timer').textContent='';
+  $('btnBegin').classList.remove('hidden'); $('turnmsg').textContent='';
+  renderBeatBoard(); brenderIdle(); }
+function renderBeatBoard(){ if(MODE!=='beat'||!BEAT)return; const el=$('scores'); el.innerHTML='';
+  const rows=(BEAT.players||[]).map(p=>({name:p.name, s:(BEAT.live[p.name]?BEAT.live[p.name].s:p.score)|0,
+    c:BEAT.live[p.name]?BEAT.live[p.name].c:null, online:p.online!==false}));
+  const me=$('nick').value.trim().slice(0,12);
+  const mine=rows.find(r=>r.name===me);
+  if(mine&&BEAT.phase==='playing'){ mine.s=BEAT.score; mine.c=BEAT.combo; }
+  rows.sort((a,b)=>b.s-a.s).forEach(r=>{
+    const d=document.createElement('div'); d.className='sc'+(r.online?'':' off')+(r.name===me?' drawer':'');
+    const nm=document.createElement('span'); nm.textContent=(r.name===me?'🎧 ':'')+r.name+(r.c>1?` ×${r.c}`:'');
+    const pt=document.createElement('span'); pt.className='pt'; pt.textContent=r.s;
+    d.appendChild(nm); d.appendChild(pt); el.appendChild(d); }); }
+/* judgment */
+function hitLane(l){ const B=BEAT; if(MODE!=='beat'||!B||B.phase!=='playing'||B.finished)return;
+  B.press[l]=performance.now();
+  const st=songTime(); if(st<0)return;
+  let best=-1,bd=1e9;
+  for(let k=Math.max(0,B.next-4);k<B.chart.notes.length;k++){ const n=B.chart.notes[k];
+    if(n.hit||n.miss||n.l!==l){ if(n.t-st>200)break; continue; }
+    const d=n.t-st; if(d>200)break;
+    const ad=Math.abs(d); if(ad<bd){ bd=ad; best=k; } }
+  if(best<0||bd>180) return;                       // stray tap: no penalty
+  const n=B.chart.notes[best]; n.hit=true;
+  let pts,j; if(bd<=55){pts=300;j='PERFECT';} else if(bd<=120){pts=150;j='GOOD';} else {pts=50;j='BAD';}
+  B.sum+=pts; B.score+=pts+Math.min(100,B.combo); B.combo++;
+  B.maxCombo=Math.max(B.maxCombo,B.combo);
+  B.judge={j,at:performance.now()}; B.dirty=true; blip(pts); }
+document.addEventListener('keydown',e=>{ ensureAudio();
+  if(MODE!=='beat'||!BEAT||BEAT.phase!=='playing'||e.repeat)return;
+  const l={KeyD:0,KeyF:1,KeyJ:2,KeyK:3}[e.code]; if(l==null)return;
+  e.preventDefault(); hitLane(l); });
+cv.addEventListener('pointerdown',e=>{ if(MODE!=='beat')return; ensureAudio();
+  const [x]=evPt(e); if(x<60||x>=540)return; hitLane(Math.floor((x-60)/120)); });
+/* loop */
+function beatTick(){ const B=BEAT; if(!B||B.phase!=='playing'){ stopBeat(); return; }
+  const st=songTime(), notes=B.chart.notes;
+  while(B.next<notes.length){ const n=notes[B.next];
+    if(n.hit){ B.next++; continue; }
+    if(n.t<st-180){ n.miss=true; B.combo=0; B.judge={j:'MISS',at:performance.now()}; B.next++; B.dirty=true; continue; }
+    break; }
+  scheduleAudio(st);
+  if(st>B.chart.duration+400&&!B.finished){ B.finished=true;
+    const total=notes.length, acc=total?Math.round(100*B.sum/(300*total)):0;
+    send({t:'bfin',s:B.score,mc:B.maxCombo,acc});
+    $('wordtxt').textContent='🏁 완주! 다른 플레이어를 기다리는 중…'; $('timer').textContent='';
+    stopBeat(); brender(st,true); renderBeatBoard(); return; }
+  brender(st,false);
+  const pn=performance.now();
+  if(pn-B.lastSend>900&&B.dirty){ B.dirty=false; B.lastSend=pn; send({t:'bscore',s:B.score,c:B.combo}); }
+  if(pn-B.lastBoard>500){ B.lastBoard=pn; renderBeatBoard(); }
+  $('wordtxt').textContent = st<0 ? ('시작까지 '+Math.ceil(-st/1000)+'…') : ('♪ 라운드 '+B.roundN+' — BPM '+B.chart.bpm);
+  $('timer').textContent = st<0 ? '' : Math.max(0,Math.ceil((B.chart.duration-st)/1000))+'초'; }
+/* render */
+const BCOLS=['#35dcff','#3ee08a','#ffb454','#ff6f61'], BLX=60, BLW=120, BHY=520, BAPP=1500;
+function brenderIdle(){ cx.setTransform(DPR,0,0,DPR,0,0);
+  cx.fillStyle='#0c1120'; cx.fillRect(0,0,CSS,CSS);
+  cx.fillStyle='rgba(159,178,207,.8)'; cx.font='700 22px Pretendard,sans-serif'; cx.textAlign='center';
+  cx.fillText('🎵 라운드 시작을 누르면 같은 비트가 흐릅니다',300,290);
+  cx.fillText('D · F · J · K 로 노트를 치세요',300,325); }
+function brender(st,done){ const B=BEAT;
+  cx.setTransform(DPR,0,0,DPR,0,0);
+  cx.fillStyle='#0c1120'; cx.fillRect(0,0,CSS,CSS);
+  const pn=performance.now();
+  for(let l=0;l<4;l++){ const x=BLX+l*BLW;
+    const pf=Math.max(0,1-(pn-(B.press[l]||0))/180);
+    if(pf>0){ cx.fillStyle=`rgba(53,220,255,${(0.16*pf).toFixed(3)})`; cx.fillRect(x,0,BLW,BHY); }
+    cx.strokeStyle='rgba(140,170,220,.14)'; cx.strokeRect(x,0,BLW,BHY); }
+  cx.strokeStyle='rgba(53,220,255,.85)'; cx.lineWidth=3;
+  cx.beginPath(); cx.moveTo(BLX,BHY); cx.lineTo(BLX+4*BLW,BHY); cx.stroke(); cx.lineWidth=1;
+  cx.font='800 20px Pretendard,sans-serif'; cx.textAlign='center';
+  'DFJK'.split('').forEach((k,l)=>{ cx.fillStyle='rgba(159,178,207,.55)'; cx.fillText(k,BLX+l*BLW+BLW/2,556); });
+  for(let k=Math.max(0,B.next-6);k<B.chart.notes.length;k++){ const n=B.chart.notes[k];
+    const dt=n.t-st; if(dt>BAPP)break; if(n.hit||dt<-220)continue;
+    const y=BHY-(dt/BAPP)*BHY;
+    cx.fillStyle=n.miss?'rgba(120,130,150,.35)':BCOLS[n.l];
+    cx.fillRect(BLX+n.l*BLW+10,y-9,BLW-20,18); }
+  cx.fillStyle='#eef3fb'; cx.font='800 26px Pretendard,sans-serif';
+  cx.fillText(String(B.score),300,42);
+  if(B.combo>1){ cx.fillStyle='rgba(53,220,255,.9)'; cx.font='800 34px Pretendard,sans-serif';
+    cx.fillText(B.combo+' COMBO',300,96); }
+  if(B.judge&&pn-B.judge.at<450){ const a=1-(pn-B.judge.at)/450;
+    cx.globalAlpha=a; cx.font='800 30px Pretendard,sans-serif';
+    cx.fillStyle=B.judge.j==='PERFECT'?'#3ee08a':B.judge.j==='GOOD'?'#35dcff':B.judge.j==='BAD'?'#ffb454':'#ff6f61';
+    cx.fillText(B.judge.j,300,440); cx.globalAlpha=1; }
+  if(st<0){ cx.fillStyle='#fff'; cx.font='800 72px Pretendard,sans-serif';
+    cx.fillText(String(Math.ceil(-st/1000)),300,300); }
+  if(done){ cx.fillStyle='#fff'; cx.font='800 44px Pretendard,sans-serif'; cx.fillText('🏁 완주!',300,300); } }
+/* tiny synth (no assets, seeded chart == same beat for everyone) */
+let actx=null, noiseBuf=null;
+function ensureAudio(){ try{ if(!actx) actx=new (window.AudioContext||window.webkitAudioContext)();
+  if(actx.state==='suspended') actx.resume(); }catch(e){} }
+document.addEventListener('pointerdown',ensureAudio);
+function noise(){ if(noiseBuf)return noiseBuf; const b=actx.createBuffer(1,actx.sampleRate*0.1,actx.sampleRate);
+  const d=b.getChannelData(0); for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1; noiseBuf=b; return b; }
+function kick(w){ const o=actx.createOscillator(),g=actx.createGain();
+  o.frequency.setValueAtTime(150,w); o.frequency.exponentialRampToValueAtTime(45,w+0.1);
+  g.gain.setValueAtTime(0.5,w); g.gain.exponentialRampToValueAtTime(0.001,w+0.13);
+  o.connect(g).connect(actx.destination); o.start(w); o.stop(w+0.14); }
+function hat(w){ const s=actx.createBufferSource(),g=actx.createGain(),f=actx.createBiquadFilter();
+  s.buffer=noise(); f.type='highpass'; f.frequency.value=6000;
+  g.gain.setValueAtTime(0.09,w); g.gain.exponentialRampToValueAtTime(0.001,w+0.04);
+  s.connect(f).connect(g).connect(actx.destination); s.start(w); s.stop(w+0.05); }
+function snare(w){ const s=actx.createBufferSource(),g=actx.createGain(),f=actx.createBiquadFilter();
+  s.buffer=noise(); f.type='bandpass'; f.frequency.value=1800;
+  g.gain.setValueAtTime(0.22,w); g.gain.exponentialRampToValueAtTime(0.001,w+0.11);
+  s.connect(f).connect(g).connect(actx.destination); s.start(w); s.stop(w+0.12); }
+function blip(pts){ try{ if(!actx||actx.state!=='running')return;
+  const o=actx.createOscillator(),g=actx.createGain(),w=actx.currentTime;
+  o.type='square'; o.frequency.value=pts>=300?990:pts>=150?770:550;
+  g.gain.setValueAtTime(0.06,w); g.gain.exponentialRampToValueAtTime(0.001,w+0.05);
+  o.connect(g).connect(actx.destination); o.start(w); o.stop(w+0.06); }catch(e){} }
+function scheduleAudio(st){ const B=BEAT; try{
+  if(!actx||actx.state!=='running')return;
+  const half=30000/B.chart.bpm;                    // 8th-note grid in ms
+  while(B.audioBeat*half<st+320){ const evT=B.audioBeat*half;
+    if(evT>=B.chart.duration){ B.audioBeat++; break; }
+    if(evT>=0&&evT>=st-40){ const w=actx.currentTime+Math.max(0,(evT-st)/1000), e=B.audioBeat;
+      hat(w); if(e%2===0){ kick(w); const bi=(e/2)%4; if(bi===1||bi===3) snare(w); } }
+    B.audioBeat++; } }catch(e){} }
+initBeat();
 
 /* auto-join via #CODE (last: everything above must be initialized) */
 (function(){ const h=location.hash.replace('#','').toUpperCase();
