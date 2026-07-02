@@ -17,6 +17,9 @@ header{display:flex;align-items:center;gap:10px;margin-bottom:18px}
 header h1{font-size:20px;font-weight:800}
 header .tag{font-size:10px;letter-spacing:.12em;color:var(--cyan);border:1px solid rgba(18,181,166,.4);
   background:#fff;padding:3px 9px;border-radius:999px;text-transform:uppercase;font-weight:700}
+.mutebtn{margin-left:auto;background:#fff;border:1.5px solid var(--line);border-radius:10px;
+  padding:6px 10px;cursor:pointer;font-size:15px;line-height:1}
+.mutebtn:hover{background:var(--card2)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:20px;
   box-shadow:0 12px 32px -20px rgba(35,48,74,.22)}
 .hidden{display:none!important}
@@ -121,7 +124,8 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
 </head>
 <body>
 <div class="wrap">
-  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.19</span></header>
+  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.20</span>
+    <button type="button" id="btnMute" class="mutebtn" title="효과음 켜기/끄기">🔊</button></header>
 
   <!-- lobby -->
   <div id="lobby" class="card">
@@ -140,6 +144,7 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
       <button class="btn primary" id="btnNew">+ 새 방 만들기</button>
       <button class="btn tealout" id="btnJoin">방 입장</button>
     </div>
+    <button class="btn tealout hidden" id="lastChip" style="margin-top:10px;width:100%"></button>
   </div>
 
   <!-- game -->
@@ -215,6 +220,7 @@ $('btnJoin').onclick=()=>{ if(!myName())return; const c=$('code').value.trim().t
 $('code').addEventListener('keydown',e=>{ if(e.key==='Enter') $('btnJoin').click(); });
 
 function enter(code){ room=code; location.hash=code; inGame=true;
+  try{ localStorage.setItem('lastRoom',JSON.stringify({code,ts:Date.now()})); }catch(e){}
   board=new Array(CELLS).fill(0); turn=1; winner=0; winLine=null; lastMove=-1; hover=-1; oDrag=null;   // reset per-room state
   seats={1:null,2:null}; myRole=0; retry=0; SOLO=false; YOUIDX=0; clearReconn(); $('log').innerHTML='';
   DRAW={phase:'lobby',roundEnd:0,youDrawer:false,word:null,mask:''};
@@ -226,7 +232,7 @@ function enter(code){ room=code; location.hash=code; inGame=true;
 function leave(){ inGame=false; clearReconn(); stopPing();
   if(ws){ try{ ws.onclose=null; ws.close(); }catch(e){} } ws=null; room=null;
   history.replaceState(null,'',location.pathname);
-  $('game').classList.add('hidden'); $('lobby').classList.remove('hidden'); }
+  $('game').classList.add('hidden'); $('lobby').classList.remove('hidden'); updateLastChip(); }
 $('btnLeave').onclick=leave;
 $('btnCopy').onclick=async()=>{ try{ await navigator.clipboard.writeText(location.origin+location.pathname+'#'+room);
   $('btnCopy').textContent='✓ 복사됨'; setTimeout(()=>$('btnCopy').textContent='🔗 초대링크 복사',1200);}catch(e){} };
@@ -263,7 +269,7 @@ function handle(m){
     log('sys',`라운드 ${m.roundN} — ${m.drawer}님이 그립니다${m.you?' (당신!)':''}`); return; }
   if(m.t==='stroke'){ paintStroke(m); return; }
   if(m.t==='clear'){ clearDrawCanvas(); return; }
-  if(m.t==='correct'){ renderScores(m.players); log('sys',`🎉 ${m.name} 정답!`); return; }
+  if(m.t==='correct'){ renderScores(m.players); sfxGood(); log('sys',`🎉 ${m.name} 정답!`); return; }
   if(m.t==='reveal'){ DRAW.phase='reveal'; DRAW.word=m.word; DRAW.roundEnd=Date.now()+6000;
     renderScores(m.players); drawUiSync();
     log('sys',`⏰ 정답은 「${m.word}」${m.reason==='all'?' — 전원 정답!':m.reason==='drawer-left'?' (출제자 퇴장)':''}`); return; }
@@ -288,7 +294,7 @@ function handle(m){
     AL.turn=m.turn; AL.winner=m.winner; AL.phase='idle'; AL.mine=false; AL.auth=JSON.stringify(m.stones);
     AL.locked=!m.winner; syncWobUi();            // unlock when the game ends
     aui(); arender();
-    if(m.winner) log('sys',(m.winner===1?'흑':'백')+' 승리! 🏆'); return; }
+    if(m.winner){ sfxGood(); log('sys',(m.winner===1?'흑':'백')+' 승리! 🏆'); } return; }
   if(m.t==='wobble'){ if(MODE!=='alka')return; AL.wobble=m.v|0; syncWobUi(); return; }
   if(m.t==='abort'){ if(MODE!=='alka')return; stopAsim(); selStone=-1; aim=null;
     JSON.parse(AL.auth).forEach((s,k)=>{ const t=AL.stones[k]; if(t){ t.x=s.x; t.y=s.y; t.a=s.a; t.vx=0; t.vy=0; } });
@@ -330,7 +336,7 @@ function handle(m){
     TET.board=Array.from({length:20},()=>Array(10).fill(0));
     refillTetBag(); spawnTet();
     $('btnBegin').classList.add('hidden'); $('tpad').classList.remove('hidden');
-    renderTetScores(); log('sys',`라운드 ${m.roundN} 시작! ⌨ ←→/AD 이동 · ↑/W/X 회전 · Z 역회전 · ↓/S 소프트 · Space/Enter 하드 | 📱 드래그 이동 · 탭 회전 · 아래로 휙 하드드롭`);
+    renderTetScores(); log('sys',`라운드 ${m.roundN} 시작! ⌨ ←→/AD 이동 · ↑/W/X 회전 · Z 역회전 · C 홀드 · ↓/S 소프트 · Space/Enter 하드 | 📱 드래그 이동 · 탭 회전 · 위로 휙 홀드 · 아래로 휙 하드`);
     startTetLoop(); return; }
   if(m.t==='tscore'){ if(MODE!=='tet'||!TET)return;
     const prev=TET.live[m.name]||{};
@@ -350,6 +356,7 @@ function handle(m){
     if(myRole) log('sys','📱 터치: 꾹 누르면 손가락 위에 투명돌 — 끌어서 조준, 떼면 착수!'); return; }
   if(m.t==='move'){ board[m.i]=m.stone; turn=m.turn; winner=m.winner; winLine=m.winLine;
     if(m.ups){ if(seats[1])seats[1].up=m.ups[1]; if(seats[2])seats[2].up=m.ups[2]; }
+    sfxPlace(); if(m.winner&&m.winner!==3) sfxGood();
     lastMove=m.i; ui(); draw(); return; }
   if(m.t==='roster'){ seats=m.seats; if(typeof m.solo!=='undefined') SOLO=!!m.solo;
     $('watch').textContent=m.watchers?`👀 관전 ${m.watchers}명`:''; ui(); aui(); return; }
@@ -374,7 +381,7 @@ function ui(){
   for(const s of [1,2]){ const el=$('pl'+s), nm=el.querySelector('.nm'), st=el.querySelector('.st'), pj=el.querySelector('.pj');
     const p=seats&&seats[s];
     nm.textContent=p?(p.name+(p.mate?' · '+p.mate.name:'')):'대기 중…';
-    st.textContent=p?(p.online?'온라인':'오프라인'):'';
+    st.textContent=p?((p.online?'온라인':'오프라인')+(p.w?' · 🏆'+p.w:'')):'';
     el.classList.toggle('turn', !winner && turn===s && !!(seats[1]&&seats[2]));
     el.classList.toggle('me', myRole===s);
     pj.classList.toggle('hidden', !(myRole===0 && p && !SOLO && (!p.mate||!p.mate.online))); }
@@ -612,7 +619,7 @@ function aui(){ if(MODE!=='alka')return;
   for(const s of [1,2]){ const el=$('pl'+s), nm=el.querySelector('.nm'), st=el.querySelector('.st');
     const p=seats&&seats[s], n=AL.stones.filter(t=>t.a&&t.o===s).length;
     nm.textContent=p?p.name:'대기 중…';
-    st.textContent=p?((p.online?'온라인':'오프라인')+' · '+n+'개'):'';
+    st.textContent=p?((p.online?'온라인':'오프라인')+' · '+n+'개'+(p.w?' · 🏆'+p.w:'')):'';
     el.classList.toggle('turn', !AL.winner && AL.turn===s && !!(seats[1]&&seats[2]) && AL.phase==='idle');
     el.classList.toggle('me', myRole===s);
     el.querySelector('.pj').classList.add('hidden'); }              // no team mode in alka
@@ -629,7 +636,7 @@ function aui(){ if(MODE!=='alka')return;
   else t.textContent=(AL.turn===1?'흑':'백')+' 차례'+(myRole?'':' (관전)');
 }
 let AFADERS=[], fadeIv=null;           // knocked-out stones cry & fade out
-function addFader(s){ AFADERS.push({x:s.x,y:s.y,o:s.o,t0:performance.now()}); kickFade(); }
+function addFader(s){ AFADERS.push({x:s.x,y:s.y,o:s.o,t0:performance.now()}); sfxFall(); kickFade(); }
 function kickFade(){ if(fadeIv)return;
   fadeIv=setInterval(()=>{ AFADERS=AFADERS.filter(f=>performance.now()-f.t0<900);
     if(MODE==='alka')arender();
@@ -650,7 +657,8 @@ function alkaPhys(st,dt){              // fixed-substep integration + equal-mass
       const vn=(b.vx-a.vx)*nx+(b.vy-a.vy)*ny;
       if(vn<0){ const imp=-(1+0.92)*vn/2;
         a.vx-=imp*nx; a.vy-=imp*ny; b.vx+=imp*nx; b.vy+=imp*ny; moving=true;
-        a.hitAt=b.hitAt=performance.now(); } } }                                            // 😲 for a moment
+        a.hitAt=b.hitAt=performance.now();                                                  // 😲 for a moment
+        if(performance.now()-lastHitSfx>70){ lastHitSfx=performance.now(); sfxHit(imp/600); } } } }
   return moving;
 }
 function alkaExp(s,i){                 // situational tiger faces
@@ -699,15 +707,23 @@ function arender(){ if(MODE!=='alka')return;
     cx.beginPath(); cx.arc(ss.x,ss.y,AR+6,0,7); cx.stroke(); }
   if(aim&&AL.stones[aim.i]){ const an0=AL.stones[aim.i];                   // slingshot aim
     const dx=aim.sx-aim.x, dy=aim.sy-aim.y, p=Math.hypot(dx,dy);           // pull vector = drag start - current
-    if(p>6){ const cap=Math.min(1,p/320);
+    if(p>6){ const cap=Math.min(1,p/A_POWMAX);                             // ONE power scale everywhere
+      const LEN=40+cap*170;                                                // arrow length == power fraction
       if(AL.wobble>0){                                                     // faint ±2σ cone
-        const sig=AL.wobble*Math.PI/180*2, base=Math.atan2(dy,dx), LEN=Math.min(200,p*1.1);
+        const sig=AL.wobble*Math.PI/180*2, base=Math.atan2(dy,dx);
         cx.strokeStyle='rgba(255,255,255,.35)'; cx.lineWidth=2; cx.setLineDash([4,5]);
         for(const o of [-sig,sig]){ cx.beginPath(); cx.moveTo(an0.x,an0.y);
           cx.lineTo(an0.x+Math.cos(base+o)*LEN, an0.y+Math.sin(base+o)*LEN); cx.stroke(); }
         cx.setLineDash([]); }
+      // predicted stop point (no-collision): closed-form travel = v / ln(1/0.28)
+      const vv=Math.min(1200,p*3.2), dist=vv/1.2730;
+      const ex=an0.x+dx/p*dist, ey=an0.y+dy/p*dist;
+      const out=ex<AB0-8||ex>AB1+8||ey<AB0-8||ey>AB1+8;
+      cx.setLineDash([4,4]); cx.lineWidth=2;
+      cx.strokeStyle=out?'rgba(255,90,70,.9)':'rgba(255,255,255,.75)';
+      cx.beginPath(); cx.arc(ex,ey,AR,0,7); cx.stroke(); cx.setLineDash([]);
       cx.strokeStyle=`rgba(255,${Math.round(200-120*cap)},80,.95)`; cx.lineWidth=6; cx.lineCap='round';
-      const hx=an0.x+dx/p*Math.min(200,p*1.1), hy=an0.y+dy/p*Math.min(200,p*1.1);
+      const hx=an0.x+dx/p*LEN, hy=an0.y+dy/p*LEN;
       cx.beginPath(); cx.moveTo(an0.x,an0.y); cx.lineTo(hx,hy); cx.stroke();
       const an=Math.atan2(dy,dx);                                          // arrowhead
       cx.beginPath(); cx.moveTo(hx,hy);
@@ -716,7 +732,7 @@ function arender(){ if(MODE!=='alka')return;
       cx.lineTo(hx-14*Math.cos(an+0.42),hy-14*Math.sin(an+0.42)); cx.stroke();
       cx.setLineDash([5,6]); cx.strokeStyle='rgba(255,255,255,.5)'; cx.lineWidth=2;
       cx.beginPath(); cx.moveTo(aim.sx,aim.sy); cx.lineTo(aim.x,aim.y); cx.stroke(); cx.setLineDash([]);
-      // power gauge above the stone (finger-safe)
+      // power gauge above the stone (finger-safe) — same cap scale as arrow/ghost
       const gw=90, gx0=Math.min(CSS-gw-14,Math.max(14,an0.x-gw/2)), gy0=Math.max(14,an0.y-AR-34);
       cx.fillStyle='rgba(8,14,26,.55)'; cx.fillRect(gx0,gy0,gw,10);
       cx.fillStyle=`rgb(255,${Math.round(200-140*cap)},70)`; cx.fillRect(gx0+1,gy0+1,(gw-2)*cap,8); } }
@@ -754,6 +770,7 @@ function flickStone(i,vx,vy){                    // my shot: local sim is author
   s.vx=vx; s.vy=vy; AL.phase='sim'; AL.mine=true; selStone=-1; aim=null;
   send({t:'flick',i,vx:Math.round(vx),vy:Math.round(vy)});
   startAsim(); aui(); }
+const A_POWMAX=375;                           // pull px at which power caps (v=1200) — gauge/arrow/ghost all use this
 cv.addEventListener('pointerup',()=>{ if(MODE!=='alka'||!aim)return;
   const dx=aim.sx-aim.x, dy=aim.sy-aim.y, p=Math.hypot(dx,dy), i=aim.i; aim=null;
   if(p<14){ arender(); return; }              // just a tap -> selection stays, no shot
@@ -824,7 +841,8 @@ document.addEventListener('keydown',e=>{ ensureAudio();
   const l={KeyD:0,KeyF:1,KeyJ:2,KeyK:3}[e.code]; if(l==null)return;
   e.preventDefault(); hitLane(l); });
 cv.addEventListener('pointerdown',e=>{ if(MODE!=='beat')return; ensureAudio();
-  const [x]=evPt(e); if(x<60||x>=540)return; hitLane(Math.floor((x-60)/120)); });
+  const [x]=evPt(e);
+  hitLane(Math.max(0,Math.min(3,Math.floor((x-60)/120)))); });   // edge taps snap to nearest lane
 /* loop */
 function beatTick(){ const B=BEAT; if(!B||B.phase!=='playing'){ stopBeat(); return; }
   const st=songTime(), notes=B.chart.notes;
@@ -881,9 +899,50 @@ function brender(st,done){ const B=BEAT;
   if(done){ cx.fillStyle='#fff'; cx.font='800 44px Pretendard,sans-serif'; cx.fillText('🏁 완주!',300,300); } }
 /* tiny synth (no assets, seeded chart == same beat for everyone) */
 let actx=null, noiseBuf=null;
+let MUTED=localStorage.getItem('muted')==='1';
 function ensureAudio(){ try{ if(!actx) actx=new (window.AudioContext||window.webkitAudioContext)();
   if(actx.state==='suspended') actx.resume(); }catch(e){} }
 document.addEventListener('pointerdown',ensureAudio);
+/* ---- global SFX (respects mute) ---- */
+function syncMute(){ $('btnMute').textContent=MUTED?'🔇':'🔊'; }
+$('btnMute').onclick=()=>{ MUTED=!MUTED; localStorage.setItem('muted',MUTED?'1':'0'); syncMute(); ensureAudio(); };
+syncMute();
+function sfxOK(){ ensureAudio(); return !MUTED&&actx&&actx.state==='running'; }
+function sfxPlace(){ if(!sfxOK())return; try{ const w=actx.currentTime;   // 착수 '딱'
+  const o=actx.createOscillator(),g2=actx.createGain();
+  o.type='triangle'; o.frequency.setValueAtTime(1600,w); o.frequency.exponentialRampToValueAtTime(650,w+0.035);
+  g2.gain.setValueAtTime(0.16,w); g2.gain.exponentialRampToValueAtTime(0.001,w+0.08);
+  o.connect(g2).connect(actx.destination); o.start(w); o.stop(w+0.09);}catch(e){} }
+function sfxHit(v){ if(!sfxOK())return; try{ const w=actx.currentTime;   // 충돌 '툭'
+  const s=actx.createBufferSource(),g2=actx.createGain(),f=actx.createBiquadFilter();
+  s.buffer=noise(); f.type='lowpass'; f.frequency.value=900;
+  g2.gain.setValueAtTime(0.06+0.28*Math.min(1,v||0.5),w); g2.gain.exponentialRampToValueAtTime(0.001,w+0.09);
+  s.connect(f).connect(g2).connect(actx.destination); s.start(w); s.stop(w+0.1);}catch(e){} }
+function sfxFall(){ if(!sfxOK())return; try{ const w=actx.currentTime;   // 탈락 슝~
+  const o=actx.createOscillator(),g2=actx.createGain();
+  o.type='sine'; o.frequency.setValueAtTime(520,w); o.frequency.exponentialRampToValueAtTime(140,w+0.28);
+  g2.gain.setValueAtTime(0.14,w); g2.gain.exponentialRampToValueAtTime(0.001,w+0.3);
+  o.connect(g2).connect(actx.destination); o.start(w); o.stop(w+0.32);}catch(e){} }
+function sfxClear(n){ if(!sfxOK())return; try{ const w=actx.currentTime; // 줄 클리어 아르페지오
+  [523,659,784,1047].slice(0,Math.max(2,n+1)).forEach((f2,i)=>{
+    const o=actx.createOscillator(),g2=actx.createGain();
+    o.type='square'; o.frequency.value=f2;
+    g2.gain.setValueAtTime(0.07,w+i*0.06); g2.gain.exponentialRampToValueAtTime(0.001,w+i*0.06+0.12);
+    o.connect(g2).connect(actx.destination); o.start(w+i*0.06); o.stop(w+i*0.06+0.13); });}catch(e){} }
+function sfxGood(){ if(!sfxOK())return; try{ const w=actx.currentTime;   // 정답/승리 띠링
+  [660,990].forEach((f2,i)=>{ const o=actx.createOscillator(),g2=actx.createGain();
+    o.type='triangle'; o.frequency.value=f2;
+    g2.gain.setValueAtTime(0.12,w+i*0.09); g2.gain.exponentialRampToValueAtTime(0.001,w+i*0.09+0.16);
+    o.connect(g2).connect(actx.destination); o.start(w+i*0.09); o.stop(w+i*0.09+0.18); });}catch(e){} }
+let lastHitSfx=0;
+/* ---- 최근 방 재입장 ---- */
+function updateLastChip(){ try{
+  const lr=JSON.parse(localStorage.getItem('lastRoom')||'null');
+  const ok=lr&&lr.code&&Date.now()-lr.ts<86400000;
+  $('lastChip').classList.toggle('hidden',!ok||inGame);
+  if(ok) $('lastChip').textContent='↻ 최근 방 '+lr.code+' 다시 입장'; }catch(e){} }
+$('lastChip').onclick=()=>{ try{ const lr=JSON.parse(localStorage.getItem('lastRoom')||'null');
+  if(lr&&lr.code&&myName()) enter(lr.code); }catch(e){} };
 function noise(){ if(noiseBuf)return noiseBuf; const b=actx.createBuffer(1,actx.sampleRate*0.1,actx.sampleRate);
   const d=b.getChannelData(0); for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1; noiseBuf=b; return b; }
 function kick(w){ const o=actx.createOscillator(),g=actx.createGain();
@@ -898,13 +957,13 @@ function snare(w){ const s=actx.createBufferSource(),g=actx.createGain(),f=actx.
   s.buffer=noise(); f.type='bandpass'; f.frequency.value=1800;
   g.gain.setValueAtTime(0.22,w); g.gain.exponentialRampToValueAtTime(0.001,w+0.11);
   s.connect(f).connect(g).connect(actx.destination); s.start(w); s.stop(w+0.12); }
-function blip(pts){ try{ if(!actx||actx.state!=='running')return;
+function blip(pts){ try{ if(MUTED||!actx||actx.state!=='running')return;
   const o=actx.createOscillator(),g=actx.createGain(),w=actx.currentTime;
   o.type='square'; o.frequency.value=pts>=300?990:pts>=150?770:550;
   g.gain.setValueAtTime(0.06,w); g.gain.exponentialRampToValueAtTime(0.001,w+0.05);
   o.connect(g).connect(actx.destination); o.start(w); o.stop(w+0.06); }catch(e){} }
 function scheduleAudio(st){ const B=BEAT; try{
-  if(!actx||actx.state!=='running')return;
+  if(MUTED||!actx||actx.state!=='running')return;
   const half=30000/B.chart.bpm;                    // 8th-note grid in ms
   while(B.audioBeat*half<st+320){ const evT=B.audioBeat*half;
     if(evT>=B.chart.duration){ B.audioBeat++; break; }
@@ -921,7 +980,8 @@ const TFX=165,TFY=28,TCS=27;                     // field origin + cell size on 
 function initTet(){ if(TET&&TET.loop) clearInterval(TET.loop);
   TET={phase:'lobby',players:[],live:{},rnd:null,queue:[],board:null,cur:null,
        score:0,lines:0,over:false,pend:0,acc:0,lastT:0,perfStart:0,roundN:0,loop:null,
-       lastSend:0,lastBoard:0,dirty:false}; }
+       lastSend:0,lastBoard:0,dirty:false,
+       hold:null,holdUsed:false,groundedAt:null,lockResets:0}; }
 function stopTet(){ if(TET&&TET.loop){ clearInterval(TET.loop); TET.loop=null; } }
 function tetLobbyUi(){ if(MODE!=='tet')return;
   $('wordtxt').textContent='🧱 준비되면 시작! (혼자 연습도 가능)'; $('timer').textContent='';
@@ -945,14 +1005,22 @@ function spawnTet(){ if(TET.queue.length<7) refillTetBag();
   if(tHit(TET.cur.p,TET.cur.r,TET.cur.x,TET.cur.y)) tetTopOut(); }
 function tetLevel(){ return 1+((TET.lines/10)|0); }
 function tetGrav(){ return Math.max(90,700-(tetLevel()-1)*60); }
-function tetMove(dx){ const c=TET.cur; if(c&&!tHit(c.p,c.r,c.x+dx,c.y)){ c.x+=dx; trender(); } }
+function lockReset(){ if(TET.groundedAt&&TET.lockResets<15){ TET.groundedAt=performance.now(); TET.lockResets++; } }
+function tetMove(dx){ const c=TET.cur; if(c&&!tHit(c.p,c.r,c.x+dx,c.y)){ c.x+=dx; lockReset(); trender(); } }
 function tetRot(dir){ const c=TET.cur; if(!c)return; const nr=(c.r+dir+4)%4;
-  for(const k of [0,-1,1,-2,2]) if(!tHit(c.p,nr,c.x+k,c.y)){ c.r=nr; c.x+=k; trender(); return; } }
+  for(const k of [0,-1,1,-2,2]) if(!tHit(c.p,nr,c.x+k,c.y)){ c.r=nr; c.x+=k; lockReset(); trender(); return; } }
 function tetSoft(){ const c=TET.cur; if(!c)return;
-  if(!tHit(c.p,c.r,c.x,c.y+1)){ c.y++; TET.score++; TET.dirty=true; trender(); } else tetLock(); }
+  if(!tHit(c.p,c.r,c.x,c.y+1)){ c.y++; TET.score++; TET.dirty=true; trender(); }
+  else if(!TET.groundedAt) TET.groundedAt=performance.now(); }   // soft drop onto ground starts lock delay
+function tetHold(){ const T=TET; if(!T.cur||T.holdUsed||T.over)return;
+  const p=T.cur.p;
+  if(T.hold){ const h=T.hold; T.hold=p; T.cur={p:h,r:0,x:3,y:-1};
+    if(tHit(T.cur.p,T.cur.r,T.cur.x,T.cur.y)){ tetTopOut(); return; } }
+  else { T.hold=p; spawnTet(); }
+  T.holdUsed=true; T.groundedAt=null; T.lockResets=0; trender(); }
 function tetHard(){ const c=TET.cur; if(!c)return; let d2=0;
   while(!tHit(c.p,c.r,c.x,c.y+1)){ c.y++; d2++; }
-  TET.score+=d2*2; TET.dirty=true; tetLock(); }
+  TET.score+=d2*2; TET.dirty=true; sfxHit(0.7); tetLock(); }
 function tetLock(){ const c=TET.cur; let died=false;
   for(const [cx2,cy2] of tCells(c.p,c.r)){ const by=c.y+cy2;
     if(by<0){ died=true; continue; } TET.board[by][c.x+cx2]=c.p; }
@@ -967,9 +1035,11 @@ function tetLock(){ const c=TET.cur; let died=false;
   if(TET.pend>0){ for(let k=0;k<TET.pend;k++){ TET.board.shift();
       const row2=Array(10).fill('G'); row2[(Math.random()*10)|0]=0; TET.board.push(row2); }
     TET.pend=0; }
+  TET.groundedAt=null; TET.lockResets=0; TET.holdUsed=false;
+  if(cleared) sfxClear(cleared);
   if(died){ tetTopOut(); return; }
   spawnTet(); trender(); }
-function tetTopOut(){ if(TET.over)return; TET.over=true; TET.cur=null;
+function tetTopOut(){ if(TET.over)return; TET.over=true; TET.cur=null; sfxFall();
   send({t:'tfin',s:TET.score,l:TET.lines});
   $('wordtxt').textContent='💀 탈락! — '+TET.score+'점 · '+TET.lines+'줄 · 다른 플레이어 대기 중';
   $('tpad').classList.add('hidden'); trender(); }
@@ -982,11 +1052,17 @@ function startTetLoop(){ stopTet(); TET.acc=0; TET.lastT=performance.now(); TET.
 function tetTick(){ const T=TET; if(!T||T.phase!=='playing'){ stopTet(); return; }
   const st=songTet(), now=performance.now(), dt=Math.min(500,now-T.lastT); T.lastT=now;
   if(st<0){ trender(); $('wordtxt').textContent='시작까지 '+Math.ceil(-st/1000)+'…'; return; }
-  if(!T.over&&T.cur){ T.acc+=dt;
-    const g2=tetGrav();
-    while(T.acc>=g2){ T.acc-=g2;
-      if(!tHit(T.cur.p,T.cur.r,T.cur.x,T.cur.y+1)) T.cur.y++;
-      else { tetLock(); break; } } }
+  if(!T.over&&T.cur){
+    if(tHit(T.cur.p,T.cur.r,T.cur.x,T.cur.y+1)){                 // resting: lock delay (0.5s, move/rotate resets)
+      T.acc=0;
+      if(!T.groundedAt) T.groundedAt=performance.now();
+      else if(performance.now()-T.groundedAt>=500) tetLock();
+    } else {
+      T.groundedAt=null;
+      T.acc+=dt; const g2=tetGrav();
+      while(T.acc>=g2){ T.acc-=g2;
+        if(!tHit(T.cur.p,T.cur.r,T.cur.x,T.cur.y+1)) T.cur.y++;
+        else break; } } }
   trender();
   if(!T.over){ $('wordtxt').textContent='🧱 '+T.score+'점 · '+T.lines+'줄 · Lv'+tetLevel();
     const s2=(st/1000)|0; $('timer').textContent=((s2/60)|0)+':'+String(s2%60).padStart(2,'0'); }
@@ -1027,6 +1103,13 @@ function trender(){ const T=TET; if(MODE!=='tet'||!T||!T.board)return;
   cx.fillText(T.lines+'줄 · Lv'+tetLevel(),150,82);
   if(T.pend>0){ cx.fillStyle='#ff6f61'; cx.font='800 17px Pretendard,sans-serif';
     cx.fillText('⚠ 가비지 +'+T.pend,150,116); }
+  // HOLD box (C키 / 위로 휙 / ⇄)
+  cx.textAlign='left'; cx.fillStyle='rgba(159,178,207,.7)'; cx.font='700 13px Pretendard,sans-serif';
+  cx.fillText('HOLD',60,146);
+  cx.strokeStyle='rgba(140,170,220,.3)'; cx.strokeRect(56,154,72,52);
+  if(T.hold){ cx.globalAlpha=T.holdUsed?0.35:1;
+    for(const [dx2,dy2] of TSHP[T.hold]){ cx.fillStyle=TCOLS[T.hold]; cx.fillRect(64+dx2*15,162+dy2*15,13,13); }
+    cx.globalAlpha=1; }
   // opponents' live mini boards (right column, up to 4)
   const me2=$('nick').value.trim().slice(0,12);
   const opps=(T.players||[]).filter(p=>p.name!==me2&&p.playing!==false)
@@ -1072,6 +1155,7 @@ document.addEventListener('keydown',e=>{ if(MODE!=='tet'||!TET||TET.phase!=='pla
   else if(k==='ArrowDown'||k==='KeyS'){ e.preventDefault(); tetSoft(); }
   else if(k==='ArrowUp'||k==='KeyW'||k==='KeyX'){ e.preventDefault(); tetRot(1); }
   else if(k==='KeyZ'){ e.preventDefault(); tetRot(-1); }
+  else if(k==='KeyC'||k==='ShiftLeft'){ e.preventDefault(); tetHold(); }
   else if(k==='Space'||k==='Enter'||k==='NumpadEnter'){ e.preventDefault(); tetHard(); } });
 /* mobile SOTA gestures: drag = move / slow drag down = soft / fast flick down = hard / tap = rotate */
 let tetG=null;
@@ -1087,7 +1171,8 @@ cv.addEventListener('pointermove',e=>{ if(MODE!=='tet'||!tetG||!TET.cur)return;
 cv.addEventListener('pointerup',e=>{ if(MODE!=='tet'||!tetG)return;
   const g2=tetG; tetG=null; if(!TET.cur)return;
   const [x,y]=evPt(e), dt2=performance.now()-g2.t0, dy=y-g2.y0, dx=Math.abs(x-g2.x0);
-  if(dy>90&&dy>dx*1.5&&dy/dt2>0.6){ tetHard(); return; }          // fast downward flick
+  if(dy>90&&dy>dx*1.5&&dy/dt2>0.6){ tetHard(); return; }          // fast downward flick = hard drop
+  if(dy<-80&&(-dy)>dx*1.5&&(-dy)/dt2>0.6){ tetHold(); return; }   // fast upward flick = HOLD
   if(!g2.acted&&dt2<300&&dx<12&&Math.abs(dy)<12){                  // tap: left third CCW, else CW
     if(x<200) tetRot(-1); else tetRot(1); } });
 cv.addEventListener('pointercancel',()=>{ if(MODE==='tet') tetG=null; });
@@ -1098,7 +1183,7 @@ cv.addEventListener('pointercancel',()=>{ if(MODE==='tet') tetG=null; });
     b.addEventListener('pointerdown',e=>{ e.preventDefault(); if(MODE==='tet'&&TET&&TET.phase==='playing'&&!TET.over&&TET.cur&&songTet()>=0) fn(); });
     t.appendChild(b); };
   mk2('◀',()=>tetMove(-1)); mk2('▼',()=>tetSoft()); mk2('▶',()=>tetMove(1));
-  mk2('⟲',()=>tetRot(-1)); mk2('⟳',()=>tetRot(1)); mk2('⏬',()=>tetHard()); })();
+  mk2('⟲',()=>tetRot(-1)); mk2('⟳',()=>tetRot(1)); mk2('⇄',()=>tetHold()); mk2('⏬',()=>tetHard()); })();
 initTet();
 
 /* browser back/forward: leaving the room hash exits to the lobby; a room hash (re)enters */
@@ -1112,6 +1197,7 @@ window.addEventListener('hashchange',()=>{
 /* auto-join via #CODE (last: everything above must be initialized) */
 (function(){ const h=location.hash.replace('#','').toUpperCase();
   if(/^[A-Z0-9]{4,8}$/.test(h)){ if($('nick').value.trim()) enter(h); else $('code').value=h; } })();
+updateLastChip();
 </script>
 </body>
 </html>

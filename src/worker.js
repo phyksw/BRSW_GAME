@@ -80,9 +80,11 @@ export class GameRoom {
   seatsPub(g) {
     const pub = (s, side) => s ? { name: s.name, online: !!s.online,
       mate: g.tm && g.tm.mates[side] ? { name: g.tm.mates[side].name, online: !!g.tm.mates[side].online } : null,
-      up: this.upOf(g, side) } : null;
+      up: this.upOf(g, side), w: (g.wins && g.wins[s.token]) | 0 } : null;   // rematch win tally
     return { 1: pub(g.seats[1], 1), 2: pub(g.seats[2], 2) };
   }
+  addWin(g, side) { g.wins = g.wins || {};
+    const s = g.seats[side]; if (s) g.wins[s.token] = (g.wins[s.token] | 0) + 1; }
   isSolo(g) { return !!(g.seats[1] && g.seats[2] && g.seats[1].token === g.seats[2].token); }
   sideMembers(g, side) { const mem = []; if (g.seats[side]) mem.push(g.seats[side]);
     if (g.tm && g.tm.mates[side]) mem.push(g.tm.mates[side]); return mem; }
@@ -292,6 +294,10 @@ export class GameRoom {
         if (!g.tm.mates[s].online || g.tm.mates[s].name !== name) { g.tm.mates[s].online = true; g.tm.mates[s].name = name; dirty = true; }
       }
       const midGame = g.mode === 'alka' ? (g.a.moves > 0 && !g.a.winner) : (g.moves > 0 && !g.winner);
+      if (!role && this.isSolo(g)) {              // solo owner was holding BOTH seats: a real friend takes white
+        g.seats[2] = { token, name, online: true }; role = 2; dirty = true;
+        this.bcast({ t: 'sys', text: `${name}님이 백을 이어받아 혼자 두기가 해제됐어요!` });
+      }
       if (!role) for (const s of [1, 2]) if (!role && !g.seats[s]) {                    // empty seats first
         g.seats[s] = { token, name, online: true }; role = s; dirty = true;
       }
@@ -315,8 +321,8 @@ export class GameRoom {
       if (!text.trim() || !att.name) return;
       if (g.mode === 'draw' && g.d && g.d.phase === 'drawing' && g.d.word) {   // guess check
         const d = g.d;
-        if (att.token === d.drawer) {
-          if (norm(text).includes(norm(d.word))) return;      // drawer can't leak the word
+        if (att.token === d.drawer || d.guessed[att.token]) {
+          if (norm(text).includes(norm(d.word))) return;      // drawer AND past guessers can't spoil the word
         } else if (att.token && d.players[att.token] && !d.guessed[att.token] && norm(text) === norm(d.word)) {
           d.guessed[att.token] = true;
           const bonus = Math.max(0, Math.round(50 * (d.roundEnd - Date.now()) / ROUND_MS));
@@ -518,6 +524,7 @@ export class GameRoom {
       else if (c1 === 0 && c2 > 0) a.winner = 2;
       else if (c1 === 0 && c2 === 0) a.winner = a.turn === 1 ? 2 : 1;    // killed your own last stone too
       else a.turn = a.turn === 1 ? 2 : 1;
+      if (a.winner) this.addWin(g, a.winner);
       a.phase = 'idle';
       await this.save();
       this.bcast({ t: 'settle', stones: a.stones, turn: a.turn, winner: a.winner });
@@ -539,7 +546,7 @@ export class GameRoom {
       }
       g.board[i] = side; g.moves++; g.last = i;
       const win = winLine(g.board, i);
-      if (win) { g.winner = side; g.winLine = win; }
+      if (win) { g.winner = side; g.winLine = win; this.addWin(g, side); }
       else if (g.moves === CELLS) g.winner = 3;  // draw
       else g.turn = side === 1 ? 2 : 1;
       if (g.tm) g.tm.idx[side]++;
@@ -573,6 +580,7 @@ export class GameRoom {
       const ng = emptyGame('omok');              // keep the room an omok room (was a mode:null bug)
       ng.seats[1] = s2; ng.seats[2] = s1;        // swap colors each round
       ng.round = (g.round || 1) + 1;
+      ng.wins = g.wins || {};                    // rematch tally survives
       ng.tm = g.tm ? { mates: { 1: g.tm.mates[2], 2: g.tm.mates[1] }, idx: { 1: 0, 2: 0 } } : null;  // teams swap too
       this.game = ng;
       await this.save();
