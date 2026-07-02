@@ -22,17 +22,19 @@ const WORDS = ['사과','바나나','수박','포도','딸기','피자','햄버�
 const norm = s => String(s).replace(/\s+/g, '').toLowerCase();
 
 const emptyGame = (mode) => ({
-  mode: mode || null,                // 'omok' | 'draw' | 'alka' — fixed at room creation (first join)
+  mode: mode || null,                // 'omok' | 'draw' | 'alka' — set at room creation (switchable between rounds)
   board: new Array(CELLS).fill(0),   // ── omok: 0 empty, 1 black, 2 white
   turn: 1, winner: 0, winLine: null, moves: 0, round: 1, last: -1,
+  hist: [],                          //    omok move history [{i,s}] — enables 무르기 (undo)
   seats: { 1: null, 2: null },       //    {token,name,online} (shared by omok + alka)
   d: null,                           // ── draw: {players,order,drawer,word,roundN,roundEnd,phase,guessed}
   a: null,                           // ── alka: {stones,turn,winner,round,phase,moves}
   b: null,                           // ── beat: {players,order,phase,seed,startAt,roundN}
   tt: null,                          // ── tet:  {players,order,phase,seed,startAt,roundN}
 });
+const CHOOSE_MS = 15_000;
 const emptyDraw = () => ({ players: {}, order: [], drawer: null, word: null,
-  roundN: 0, roundEnd: 0, phase: 'lobby', guessed: {} });
+  roundN: 0, roundEnd: 0, phase: 'lobby', guessed: {}, used: [], choices: null });
 // alka: 5 black stones (role 1, bottom) vs 5 white (role 2, top) on a 600x600 board
 const emptyAlka = () => ({ stones: (() => { const st = [];
     for (let k = 0; k < 5; k++) st.push({ x: 150 + k * 75, y: 140, o: 2, a: 1 });
@@ -66,8 +68,13 @@ export class GameRoom {
   async fetch(request) {
     if (request.headers.get('Upgrade') !== 'websocket')
       return new Response('WebSocket expected', { status: 426 });
-    if (this.ctx.getWebSockets().length >= MAX_CONN)
-      return new Response('room full', { status: 429 });
+    if (this.ctx.getWebSockets().length >= MAX_CONN) {
+      const full = new WebSocketPair();          // accept just long enough to say WHY, then close
+      full[1].accept();
+      try { full[1].send(JSON.stringify({ t: 'err', code: 'full', max: MAX_CONN }));
+            full[1].close(1008, 'full'); } catch {}
+      return new Response(null, { status: 101, webSocket: full[0] });
+    }
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1]);          // hibernation-friendly accept
     return new Response(null, { status: 101, webSocket: pair[0] });
@@ -100,8 +107,10 @@ export class GameRoom {
       const d = g.d;
       return { t: 'state', mode: 'draw', phase: d.phase, roundN: d.roundN, roundEnd: d.roundEnd,
                players: this.drawPlayersPub(d), youDrawer: token === d.drawer,
+               drawerName: d.drawer && d.players[d.drawer] ? d.players[d.drawer].name : '',
                mask: d.word ? this.mask(d.word) : '',
                word: (token === d.drawer || d.phase === 'reveal') ? d.word : null,
+               choices: (d.phase === 'choosing' && token === d.drawer) ? d.choices : null,
                strokes: this.strokes };
     }
     if (g.mode === 'alka') {
@@ -178,8 +187,31 @@ export class GameRoom {
       const t = d.order[(idx + k) % d.order.length];
       if (d.players[t].online) next = t;
     }
-    d.drawer = next; d.word = WORDS[(Math.random() * WORDS.length) | 0];
-    d.roundN++; d.guessed = {}; d.phase = 'drawing'; d.roundEnd = Date.now() + ROUND_MS;
+    d.drawer = next; d.word = null;
+    if (!d.used) d.used = [];
+    if (d.used.length > WORDS.length - 6) d.used = [];           // recycle once nearly exhausted
+    const pool = WORDS.filter(w2 => !d.used.includes(w2));
+    const picks = [];
+    while (picks.length < 3 && pool.length)
+      picks.push(pool.splice((Math.random() * pool.length) | 0, 1)[0]);
+    d.choices = picks;
+    d.roundN++; d.phase = 'choosing'; d.roundEnd = Date.now() + CHOOSE_MS;
+    await this.save(); await this.ctx.storage.setAlarm(d.roundEnd);
+    const dn = d.players[d.drawer].name;
+    for (const w of this.ctx.getWebSockets()) {                 // the 3 candidates go ONLY to the drawer
+      const a = w.deserializeAttachment() || {};
+      try {
+        if (a.token === d.drawer)
+          w.send(JSON.stringify({ t: 'choice', words: d.choices, roundN: d.roundN, roundEnd: d.roundEnd }));
+        else
+          w.send(JSON.stringify({ t: 'choosing', drawer: dn, roundN: d.roundN, roundEnd: d.roundEnd }));
+      } catch {}
+    }
+  }
+  async beginDrawing(g, word) {
+    const d = g.d;
+    d.word = word; d.used.push(word); d.choices = null;
+    d.guessed = {}; d.phase = 'drawing'; d.roundEnd = Date.now() + ROUND_MS;
     this.strokes = [];
     await this.save(); await this.ctx.storage.setAlarm(d.roundEnd);
     for (const w of this.ctx.getWebSockets()) {                 // word goes ONLY to the drawer's sockets
@@ -224,7 +256,8 @@ export class GameRoom {
     if (g.mode !== 'draw' || !g.d) return;
     const d = g.d;
     if (now < d.roundEnd - 250) { await this.ctx.storage.setAlarm(d.roundEnd); return; }  // stale alarm
-    if (d.phase === 'drawing') await this.endRound(g, 'time');
+    if (d.phase === 'choosing') await this.beginDrawing(g, (d.choices && d.choices[0]) || WORDS[0]);  // auto-pick
+    else if (d.phase === 'drawing') await this.endRound(g, 'time');
     else if (d.phase === 'reveal') await this.startRound(g);
   }
   liveTokens(except) {                 // tokens with an actually-connected socket
@@ -342,7 +375,7 @@ export class GameRoom {
     if (m.t === 'begin') {                        // draw/beat: any member starts a round
       if (!att.token) return;
       if (g.mode === 'draw' && g.d && g.d.players[att.token]) {
-        if (g.d.phase === 'drawing') return;
+        if (g.d.phase === 'drawing' || g.d.phase === 'choosing') return;
         await this.startRound(g);
         return;
       }
@@ -439,6 +472,13 @@ export class GameRoom {
       if (g.mode !== 'draw' || !g.d || g.d.phase !== 'drawing' || att.token !== g.d.drawer) return;
       this.strokes = [];
       this.bcast({ t: 'clear' }, ws);
+      return;
+    }
+    if (m.t === 'pick') {                         // draw: drawer picks one of the 3 offered words
+      if (g.mode !== 'draw' || !g.d || g.d.phase !== 'choosing') return;
+      if (att.token !== g.d.drawer || !g.d.choices || !g.d.choices.length) return;
+      const i = Math.max(0, Math.min(g.d.choices.length - 1, m.i | 0));
+      await this.beginDrawing(g, g.d.choices[i]);
       return;
     }
 
@@ -545,6 +585,8 @@ export class GameRoom {
         if (mi !== up && mem[up].online !== false) return;   // (an offline teammate may be covered)
       }
       g.board[i] = side; g.moves++; g.last = i;
+      (g.hist = g.hist || []).push({ i, s: side });
+      g.undoBy = null;                           // a new move voids any pending undo request
       const win = winLine(g.board, i);
       if (win) { g.winner = side; g.winLine = win; this.addWin(g, side); }
       else if (g.moves === CELLS) g.winner = 3;  // draw
@@ -556,6 +598,101 @@ export class GameRoom {
       return;
     }
 
+    if (m.t === 'undoReq') {                     // omok: ask the opponent to take back the last move(s)
+      if (g.mode !== 'omok' || (att.role !== 1 && att.role !== 2)) return;
+      if (g.winner || !g.hist || !g.hist.length) return;
+      if (this.isSolo(g)) { await this.doUndo(g, att.role, true); return; }   // solo: instant, 1 move
+      if (g.undoBy) return;                      // one pending request at a time
+      g.undoBy = att.role; await this.save();
+      const other = att.role === 1 ? 2 : 1;
+      for (const w of this.ctx.getWebSockets()) {
+        const a = w.deserializeAttachment() || {};
+        if (a.role === other) { try { w.send(JSON.stringify({ t: 'undoAsk', from: att.name })); } catch {} }
+      }
+      this.bcast({ t: 'sys', text: `${att.name}님이 무르기를 요청했어요` });
+      return;
+    }
+    if (m.t === 'undoRes') {                     // opponent side accepts or declines
+      if (g.mode !== 'omok' || !g.undoBy) return;
+      if (att.role !== (g.undoBy === 1 ? 2 : 1)) return;
+      const side = g.undoBy; g.undoBy = null;
+      if (m.ok) await this.doUndo(g, side, false);
+      else { await this.save(); this.bcast({ t: 'sys', text: `${att.name}님이 무르기를 거절했어요 😤` }); }
+      return;
+    }
+    if (m.t === 'resign') {                      // omok/alka: give up -> opponent wins (unbricks stuck rooms)
+      if (att.role !== 1 && att.role !== 2) return;
+      const other = att.role === 1 ? 2 : 1;
+      if (g.mode === 'omok') {
+        if (g.winner || !g.seats[1] || !g.seats[2] || this.isSolo(g)) return;
+        g.winner = other; g.winLine = null; g.undoBy = null;
+        this.addWin(g, other);
+        await this.save();
+        for (const w of this.ctx.getWebSockets()) {
+          const a = w.deserializeAttachment() || {};
+          try { w.send(JSON.stringify(this.stateFor(g, a.role | 0, a.token))); } catch {}
+        }
+        this.bcast({ t: 'sys', text: `🏳 ${att.name}님이 기권 — ${other === 1 ? '흑' : '백'} 승리!` });
+        return;
+      }
+      if (g.mode === 'alka') {
+        const a = g.a;
+        if (a.winner || !g.seats[1] || !g.seats[2] || this.isSolo(g)) return;
+        a.winner = other; a.phase = 'idle';
+        this.addWin(g, other);
+        await this.save();
+        this.bcast({ t: 'settle', stones: a.stones, turn: a.turn, winner: a.winner });
+        this.bcast({ t: 'sys', text: `🏳 ${att.name}님이 기권 — ${other === 1 ? '흑' : '백'} 승리!` });
+        return;
+      }
+      return;
+    }
+    if (m.t === 'switch') {                      // change the room's game — only between rounds
+      const target = String(m.mode || '');
+      if (!['omok', 'draw', 'alka', 'beat', 'tet'].includes(target)) return;
+      if (!att.token || !att.name) return;
+      if (target === g.mode) return;
+      const active =
+        g.mode === 'omok' ? (g.moves > 0 && !g.winner) :
+        g.mode === 'alka' ? (g.a && g.a.moves > 0 && !g.a.winner) :
+        g.mode === 'draw' ? (g.d && (g.d.phase === 'drawing' || g.d.phase === 'choosing')) :
+        g.mode === 'beat' ? (g.b && g.b.phase === 'playing') :
+        g.mode === 'tet'  ? (g.tt && g.tt.phase === 'playing') : false;
+      if (active) { try { ws.send(JSON.stringify({ t: 'sys', text: '라운드가 끝난 뒤에 게임을 바꿀 수 있어요' })); } catch {} return; }
+      // participants in stable order: current seat holders first, then everyone connected
+      const parts = []; const seen = new Set();
+      const push = (token, name) => { if (token && name && !seen.has(token)) { seen.add(token); parts.push({ token, name }); } };
+      if (g.seats) for (const s of [1, 2]) if (g.seats[s]) push(g.seats[s].token, g.seats[s].name);
+      for (const w of this.ctx.getWebSockets()) { const a = w.deserializeAttachment() || {}; push(a.token, a.name); }
+      const live = this.liveTokens(null);
+      const alive = parts.filter(p => live.has(p.token));        // drop ghosts with no live socket
+      const ng = emptyGame(target);
+      ng.wins = g.wins || {};                                    // 🏆 tally follows the room
+      if (target === 'draw') { ng.d = emptyDraw();
+        for (const p of alive) { ng.d.players[p.token] = { name: p.name, score: 0, online: true }; ng.d.order.push(p.token); } }
+      else if (target === 'beat') { ng.b = emptyBeat();
+        for (const p of alive) { ng.b.players[p.token] = { name: p.name, online: true, playing: false, finished: false, score: 0, maxCombo: 0, acc: 0 }; ng.b.order.push(p.token); } }
+      else if (target === 'tet') { ng.tt = emptyTet();
+        for (const p of alive) { ng.tt.players[p.token] = { name: p.name, online: true, playing: false, finished: false, score: 0, lines: 0 }; ng.tt.order.push(p.token); } }
+      else if (target === 'alka') ng.a = emptyAlka();
+      if (target === 'omok' || target === 'alka') {
+        if (alive[0]) ng.seats[1] = { token: alive[0].token, name: alive[0].name, online: true };
+        if (alive[1]) ng.seats[2] = { token: alive[1].token, name: alive[1].name, online: true };
+      }
+      this.game = ng;
+      await this.save();
+      const LABEL = { omok: '⚫ 오목', draw: '🎨 그림 맞추기', alka: '🥌 알까기', beat: '🎵 리듬', tet: '🧱 테트리스' };
+      for (const w of this.ctx.getWebSockets()) {
+        const a = w.deserializeAttachment() || {}; let role = 0;
+        if (target === 'omok' || target === 'alka')
+          for (const s of [1, 2]) if (ng.seats[s] && ng.seats[s].token === a.token) role = s;
+        w.serializeAttachment({ ...a, role, mate: false });
+        try { w.send(JSON.stringify(this.stateFor(ng, role, a.token))); } catch {}
+      }
+      this.bcast({ t: 'sys', text: `${att.name}님이 게임을 ${LABEL[target]}(으)로 바꿨어요!` });
+      if (target === 'omok' || target === 'alka') this.bcast(this.roster(ng));
+      return;
+    }
     if (m.t === 'restart' && g.mode === 'alka') {  // alka rematch: reset stones, swap who starts
       if (att.role !== 1 && att.role !== 2) return;
       if (!g.a.winner) return;
@@ -598,6 +735,25 @@ export class GameRoom {
     }
   }
 
+  async doUndo(g, side, solo) {                  // pop until it's `side`'s turn again (1 or 2 moves)
+    let n = solo ? 1 : (g.hist[g.hist.length - 1].s === side ? 1 : 2);
+    n = Math.min(n, g.hist.length);
+    let lastSide = side;
+    for (let k = 0; k < n; k++) {
+      const mv = g.hist.pop(); g.board[mv.i] = 0; lastSide = mv.s;
+      if (g.tm) g.tm.idx[mv.s] = Math.max(0, g.tm.idx[mv.s] - 1);
+    }
+    g.moves = g.hist.length; g.turn = solo ? lastSide : side;
+    g.last = g.hist.length ? g.hist[g.hist.length - 1].i : -1;
+    g.winner = 0; g.winLine = null;
+    await this.save();
+    for (const w of this.ctx.getWebSockets()) {
+      const a = w.deserializeAttachment() || {};
+      try { w.send(JSON.stringify(this.stateFor(g, a.role | 0, a.token))); } catch {}
+    }
+    this.bcast({ t: 'sys', text: `↩ 무르기 — ${n}수 취소` });
+  }
+
   async webSocketClose(ws) {
     const att = ws.deserializeAttachment();
     if (!att) return;
@@ -609,6 +765,7 @@ export class GameRoom {
       this.bcast({ t: 'players', players: this.drawPlayersPub(d) });
       if (att.name && !still) this.bcast({ t: 'sys', text: `${att.name} 퇴장` });
       if (!still && att.token === d.drawer && d.phase === 'drawing') await this.endRound(g, 'drawer-left');
+      else if (!still && att.token === d.drawer && d.phase === 'choosing') await this.startRound(g);  // next drawer
       return;
     }
     if (g.mode === 'beat' && g.b) {

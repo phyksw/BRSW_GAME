@@ -20,6 +20,12 @@ header .tag{font-size:10px;letter-spacing:.12em;color:var(--cyan);border:1px sol
 .mutebtn{margin-left:auto;background:#fff;border:1.5px solid var(--line);border-radius:10px;
   padding:6px 10px;cursor:pointer;font-size:15px;line-height:1}
 .mutebtn:hover{background:var(--card2)}
+.msel{background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:7px 9px;
+  font-family:var(--sans);font-size:12px;font-weight:700;color:var(--text);cursor:pointer;outline:none}
+#connOv{position:fixed;inset:0;background:rgba(238,241,246,.72);backdrop-filter:blur(2px);
+  display:flex;align-items:center;justify-content:center;z-index:50}
+#connOv .box{background:#fff;border:1.5px solid var(--line);border-radius:16px;padding:18px 26px;
+  font-weight:800;font-size:14px;box-shadow:0 16px 40px -18px rgba(35,48,74,.4)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:20px;
   box-shadow:0 12px 32px -20px rgba(35,48,74,.22)}
 .hidden{display:none!important}
@@ -124,7 +130,7 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
 </head>
 <body>
 <div class="wrap">
-  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.20</span>
+  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.21</span>
     <button type="button" id="btnMute" class="mutebtn" title="효과음 켜기/끄기">🔊</button></header>
 
   <!-- lobby -->
@@ -147,15 +153,23 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
     <button class="btn tealout hidden" id="lastChip" style="margin-top:10px;width:100%"></button>
   </div>
 
+  <div id="connOv" class="hidden"><div class="box">📶 연결이 끊겨 재접속 중…</div></div>
+
   <!-- game -->
   <div id="game" class="hidden">
     <div class="card boardcard">
       <div class="topbar">
         <span class="codechip"><small>ROOM</small> <span id="roomcode"></span></span>
         <button class="btn tealout" id="btnCopy" style="padding:7px 12px;font-size:12px">🔗 초대링크 복사</button>
+        <select id="modeSel" class="msel" title="게임 전환 (라운드 사이에만 가능)">
+          <option value="omok">⚫ 오목</option><option value="draw">🎨 그림</option>
+          <option value="alka">🥌 알까기</option><option value="beat">🎵 리듬</option>
+          <option value="tet">🧱 테트리스</option></select>
         <span id="turnmsg"></span>
       </div>
       <div class="wordbar hidden" id="wordbar"><span id="wordtxt"></span><span id="timer"></span></div>
+      <div class="row hidden" id="wordPick" style="width:100%"></div>
+      <div class="row hidden" id="undoBar" style="width:100%"></div>
       <canvas id="board" width="600" height="600"></canvas>
       <div class="tools hidden" id="tools"></div>
       <div class="tools hidden" id="tpad"></div>
@@ -166,6 +180,11 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
           <div class="wob hidden" id="wobBox">🎯 삑
             <input type="range" id="wobRange" min="0" max="15" step="1" value="0">
             <span id="wobVal">정확</span></div>
+          <div class="wob hidden" id="beatCfg" title="판정이 계속 빠름/느림이면 조절하세요">🎚 보정
+            <input type="range" id="offRange" min="-150" max="150" step="5" value="0">
+            <span id="offVal">0ms</span></div>
+          <button class="btn hidden" id="btnUndo" title="상대 동의를 받아 마지막 수를 되돌립니다">↩ 무르기</button>
+          <button class="btn leave hidden" id="btnResign" title="기권하면 상대의 승리로 끝납니다">🏳 기권</button>
         </div>
         <button class="btn coral hidden" id="btnRestart" title="흑백(선공)을 교대해서 새 판을 시작합니다">↻ 새 판</button>
         <button class="btn leave" id="btnLeave" style="margin-left:auto;align-self:flex-start">🚪 나가기</button>
@@ -229,7 +248,7 @@ function enter(code){ room=code; location.hash=code; inGame=true;
   setMode(selMode);                              // provisional; the server state message corrects it
   $('lobby').classList.add('hidden'); $('game').classList.remove('hidden');
   $('roomcode').textContent=code; ui(); connect(); draw(); if(MODE==='draw') clearDrawCanvas(); }
-function leave(){ inGame=false; clearReconn(); stopPing();
+function leave(){ inGame=false; clearReconn(); stopPing(); showConn(false);
   if(ws){ try{ ws.onclose=null; ws.close(); }catch(e){} } ws=null; room=null;
   history.replaceState(null,'',location.pathname);
   $('game').classList.add('hidden'); $('lobby').classList.remove('hidden'); updateLastChip(); }
@@ -245,14 +264,16 @@ function connect(){
   if(ws){ try{ ws.onclose=null; ws.onmessage=null; ws.close(); }catch(e){} }   // never leave an orphan socket behind
   const proto=location.protocol==='https:'?'wss':'ws';
   const sock=new WebSocket(proto+'://'+location.host+'/ws/'+room); ws=sock;
-  sock.onopen=()=>{ if(sock!==ws) return; retry=0;
+  sock.onopen=()=>{ if(sock!==ws) return; retry=0; showConn(false);
     sock.send(JSON.stringify({t:'join',name:$('nick').value.trim().slice(0,12),token:TOKEN,mode:selMode}));
     stopPing(); pingT=setInterval(()=>{ if(sock===ws&&sock.readyState===1) sock.send('ping'); },30000); };  // keepalive (answered by the DO runtime)
   sock.onmessage=e=>{ if(sock!==ws) return; let m; try{m=JSON.parse(e.data);}catch(err){return;}
     if(m&&typeof m==='object') handle(m); };
   sock.onclose=()=>{ if(sock!==ws) return; stopPing();
-    if(!inGame) return;
-    if(++retry>8){ log('sys','접속 실패 — 방이 가득 찼거나 서버 문제예요. 나갔다가 다시 들어와 보세요.'); return; }
+    if(!inGame){ showConn(false); return; }
+    if(++retry>8){ showConn(false);
+      log('sys','접속 실패 — 방이 가득 찼거나 서버 문제예요. 나갔다가 다시 들어와 보세요.'); return; }
+    showConn(true);                                // input-blocking overlay while we reconnect
     log('sys','연결 끊김 — 재접속 중…');
     reconnT=setTimeout(()=>{ reconnT=null; if(inGame) connect(); }, Math.min(15000,1300*retry)); };
 }
@@ -263,9 +284,24 @@ function handle(m){
   if(m.t==='state'&&m.mode==='draw'){ setMode('draw');
     DRAW={phase:m.phase,roundEnd:m.roundEnd,youDrawer:m.youDrawer,word:m.word,mask:m.mask};
     renderScores(m.players); clearDrawCanvas(); (m.strokes||[]).forEach(paintStroke);
-    drawUiSync(); log('sys', m.phase==='drawing'?'라운드 진행 중!':'🎨 그림 맞추기 — 단어를 그림으로!'); return; }
+    hideWordPick();
+    if(m.phase==='choosing'){ if(m.choices) showWordPick(m.choices);
+      $('wordtxt').textContent=m.youDrawer?'✏️ 그릴 단어를 고르세요!':'✏️ '+(m.drawerName||'출제자')+'님이 단어 고르는 중…';
+      $('btnBegin').classList.add('hidden'); $('tools').classList.add('hidden'); startTimer(); }
+    else drawUiSync();
+    log('sys', m.phase==='drawing'?'라운드 진행 중!':'🎨 그림 맞추기 — 단어를 그림으로!'); return; }
+  if(m.t==='choice'){ if(MODE!=='draw')return;     // I'm the drawer: pick 1 of 3
+    DRAW.phase='choosing'; DRAW.roundEnd=m.roundEnd; DRAW.youDrawer=true;
+    showWordPick(m.words); clearDrawCanvas();
+    $('wordtxt').textContent='✏️ 그릴 단어를 고르세요!';
+    $('btnBegin').classList.add('hidden'); $('tools').classList.add('hidden'); startTimer(); return; }
+  if(m.t==='choosing'){ if(MODE!=='draw')return;   // someone else is choosing
+    DRAW.phase='choosing'; DRAW.roundEnd=m.roundEnd; DRAW.youDrawer=false;
+    hideWordPick(); clearDrawCanvas();
+    $('wordtxt').textContent='✏️ '+m.drawer+'님이 단어 고르는 중…';
+    $('btnBegin').classList.add('hidden'); $('tools').classList.add('hidden'); startTimer(); return; }
   if(m.t==='round'){ DRAW={phase:'drawing',roundEnd:m.roundEnd,youDrawer:m.you,word:m.word,mask:m.mask};
-    clearDrawCanvas(); renderScores(m.players); drawUiSync();
+    hideWordPick(); clearDrawCanvas(); renderScores(m.players); drawUiSync();
     log('sys',`라운드 ${m.roundN} — ${m.drawer}님이 그립니다${m.you?' (당신!)':''}`); return; }
   if(m.t==='stroke'){ paintStroke(m); return; }
   if(m.t==='clear'){ clearDrawCanvas(); return; }
@@ -312,7 +348,7 @@ function handle(m){
     const off=m.now-Date.now();                     // server clock offset (± half RTT)
     BEAT.perfStart=performance.now()+(m.startAt-off-Date.now());
     BEAT.chart=genChart(m.seed); BEAT.phase='playing'; BEAT.roundN=m.roundN;
-    $('btnBegin').classList.add('hidden');
+    $('btnBegin').classList.add('hidden'); $('beatCfg').classList.add('hidden');   // no mid-song recalibration
     log('sys',`라운드 ${m.roundN} 시작! (BPM ${BEAT.chart.bpm}·노트 ${BEAT.chart.notes.length}개) D·F·J·K 또는 터치`);
     startBeat(); return; }
   if(m.t==='bscore'){ if(MODE!=='beat'||!BEAT)return; BEAT.live[m.name]={s:m.s,c:m.c}; return; }
@@ -353,11 +389,16 @@ function handle(m){
     winLine=m.winLine; seats=m.seats; myRole=m.role; SOLO=!!m.solo; YOUIDX=m.youIdx||0;
     lastMove=(typeof m.last==='number'&&m.last>=0&&board[m.last])?m.last:-1; ui(); draw();
     log('sys', SOLO&&myRole? `혼자 두기 (라운드 ${m.round})` : myRole? `당신은 ${myRole===1?'흑':'백'}${YOUIDX===1?'팀':''}입니다 (라운드 ${m.round})` : '관전 모드');
-    if(myRole) log('sys','📱 터치: 꾹 누르면 손가락 위에 투명돌 — 끌어서 조준, 떼면 착수!'); return; }
+    hideUndoBar();
+    if(myRole) log('sys','📱 터치: 살짝 탭 = 그 자리에 착수 · 꾹 누르면 투명돌이 떠올라요 — 끌어서 조준, 떼면 착수!'); return; }
   if(m.t==='move'){ board[m.i]=m.stone; turn=m.turn; winner=m.winner; winLine=m.winLine;
     if(m.ups){ if(seats[1])seats[1].up=m.ups[1]; if(seats[2])seats[2].up=m.ups[2]; }
     sfxPlace(); if(m.winner&&m.winner!==3) sfxGood();
+    hideUndoBar();                                 // a new move voids any pending undo ask
     lastMove=m.i; ui(); draw(); return; }
+  if(m.t==='undoAsk'){ if(MODE==='omok') showUndoBar(m.from); return; }
+  if(m.t==='err'&&m.code==='full'){ inGame=false; leave();
+    alert('방이 가득 찼어요 (최대 '+(m.max||20)+'명). 다른 방 코드를 사용해 주세요!'); return; }
   if(m.t==='roster'){ seats=m.seats; if(typeof m.solo!=='undefined') SOLO=!!m.solo;
     $('watch').textContent=m.watchers?`👀 관전 ${m.watchers}명`:''; ui(); aui(); return; }
   if(m.t==='chat'){ log('chat',m.text,m.name); return; }
@@ -386,6 +427,8 @@ function ui(){
     el.classList.toggle('me', myRole===s);
     pj.classList.toggle('hidden', !(myRole===0 && p && !SOLO && (!p.mate||!p.mate.online))); }
   $('btnSolo').classList.toggle('hidden', !(myRole && !SOLO && !(seats&&seats[1]&&seats[2]) && boardEmpty()));
+  $('btnUndo').classList.toggle('hidden', !(myRole && !winner && !boardEmpty()));
+  $('btnResign').classList.toggle('hidden', !(myRole && !winner && !SOLO && !!(seats&&seats[1]&&seats[2])));
   const t=$('turnmsg'); t.className='';
   $('btnRestart').classList.toggle('hidden', !(winner && (myRole===1||myRole===2)));
   $('btnRestart').disabled=false;
@@ -411,6 +454,10 @@ $('btnSend').onclick=()=>{ const v=$('chat').value.trim(); if(!v)return; send({t
 $('chat').addEventListener('keydown',e=>{ if(e.key==='Enter') $('btnSend').click(); });
 $('btnRestart').onclick=()=>{ $('btnRestart').disabled=true; send({t:'restart'}); };
 $('btnSolo').onclick=()=>send({t:'solo'});
+$('btnUndo').onclick=()=>send({t:'undoReq'});
+$('btnResign').onclick=()=>{ if(confirm('정말 기권할까요? 상대의 승리로 기록됩니다.')) send({t:'resign'}); };
+$('modeSel').onchange=()=>{ const v=$('modeSel').value; $('modeSel').value=MODE;  // revert; real switch arrives as state
+  if(v!==MODE) send({t:'switch',mode:v}); };
 document.querySelectorAll('.pj').forEach(b=>{ b.onclick=e=>{ e.stopPropagation(); send({t:'joinTeam',side:+b.dataset.side}); }; });
 
 /* ---- board ---- */
@@ -504,29 +551,36 @@ cv.addEventListener('touchstart',e=>{ e.preventDefault(); },{passive:false});
 cv.addEventListener('touchmove', e=>{ e.preventDefault(); },{passive:false});
 cv.addEventListener('mousemove',e=>{ if(MODE!=='omok')return; const i=cellAt(e); if(i!==hover){ hover=i; draw(); } });
 cv.addEventListener('mouseleave',()=>{ if(MODE!=='omok')return; hover=-1; draw(); });
-/* touch aiming: the ghost floats ~1.3 cells ABOVE the finger so it stays visible */
+/* touch aiming (WYSIWYG): the ghost starts exactly UNDER the finger, then glides up
+   ~1.3 cells while you hold — release always places WHERE THE GHOST IS.
+   quick tap = offset hasn't ramped yet -> lands right under the finger */
 const O_OFF=52;
+let oAnimIv=null;
+function oOffNow(){ if(!oDrag) return 0;
+  const t=performance.now()-oDrag.t0, k=Math.max(0,Math.min(1,(t-110)/240));
+  return O_OFF*k*k*(3-2*k); }                     // smoothstep: no jump at touch-down
 function cellNear(x,y){ const gx=Math.max(0,Math.min(SIZE-1,Math.round((x-PAD)/step)));
   const gy=Math.max(0,Math.min(SIZE-1,Math.round((y-PAD)/step))); return gy*SIZE+gx; }
+function oAimSync(){ if(!oDrag) return;
+  const c=cellNear(oDrag.x,oDrag.y-oOffNow()); if(c!==hover){ hover=c; draw(); } }
+function stopOAnim(){ if(oAnimIv){ clearInterval(oAnimIv); oAnimIv=null; } }
 cv.addEventListener('pointerdown',e=>{ if(MODE!=='omok')return;
   lastPT=e.pointerType||'mouse';
   if(lastPT!=='touch'||!myTurnNow())return;
   const [x,y]=evPt(e);
-  oDrag={t0:performance.now(),x0:x,y0:y,moved:false};
-  hover=cellNear(x,y-O_OFF);
+  oDrag={t0:performance.now(),x,y};
+  hover=cellNear(x,y);                             // no jump: ghost appears at the finger
+  stopOAnim(); oAnimIv=setInterval(oAimSync,40);   // animate the lift while holding still
   try{cv.setPointerCapture(e.pointerId);}catch(err){} e.preventDefault(); draw(); });
 cv.addEventListener('pointermove',e=>{ if(MODE!=='omok'||!oDrag)return;
-  const [x,y]=evPt(e);
-  if(Math.abs(x-oDrag.x0)>8||Math.abs(y-oDrag.y0)>8) oDrag.moved=true;
-  const c=cellNear(x,y-O_OFF); if(c!==hover){ hover=c; draw(); } });
+  const [x,y]=evPt(e); oDrag.x=x; oDrag.y=y; oAimSync(); });
 cv.addEventListener('pointerup',e=>{ if(MODE!=='omok'||!oDrag)return;
-  const g2=oDrag; oDrag=null;
   const [x,y]=evPt(e);
-  const quickTap=!g2.moved&&performance.now()-g2.t0<170;
-  const i=quickTap?cellAt(e):cellNear(x,y-O_OFF);   // quick tap = finger cell, hold&drag = aimed ghost
+  const off=oOffNow(); oDrag=null; stopOAnim();
+  const i=cellNear(x,y-off);                       // exactly what the ghost showed
   hover=-1;
   if(i>=0&&board[i]===0&&myTurnNow()) send({t:'move',i}); else draw(); });
-cv.addEventListener('pointercancel',()=>{ if(MODE==='omok'&&oDrag){ oDrag=null; hover=-1; draw(); } });
+cv.addEventListener('pointercancel',()=>{ if(MODE==='omok'&&oDrag){ oDrag=null; stopOAnim(); hover=-1; draw(); } });
 cv.addEventListener('click',e=>{ if(MODE!=='omok'||lastPT==='touch')return; const i=cellAt(e);
   if(i<0||board[i]!==0||!myTurnNow()) return;
   send({t:'move',i}); });
@@ -547,6 +601,10 @@ function setMode(mo){ MODE=mo;
   $('btnBegin').textContent = mo==='beat' ? '🎵 라운드 시작' : mo==='tet' ? '🧱 게임 시작' : '🎨 라운드 시작';
   $('tools').classList.add('hidden'); $('btnBegin').classList.add('hidden'); $('btnSolo').classList.add('hidden');
   $('wobBox').classList.add('hidden'); $('tpad').classList.add('hidden');
+  $('btnUndo').classList.add('hidden'); $('btnResign').classList.add('hidden');
+  $('beatCfg').classList.toggle('hidden',mo!=='beat');
+  hideWordPick(); hideUndoBar();
+  $('modeSel').value=mo;
   if(mo!=='tet') stopTet();
   document.querySelectorAll('.pj').forEach(b=>b.classList.add('hidden'));
   if(multi) $('btnRestart').classList.add('hidden'); }
@@ -563,7 +621,24 @@ function startTimer(){ stopTimer(); timerIv=setInterval(tickTimer,400); tickTime
 function stopTimer(){ if(timerIv){ clearInterval(timerIv); timerIv=null; } $('timer').textContent=''; }
 function tickTimer(){ if(MODE!=='draw'||DRAW.phase==='lobby'){ $('timer').textContent=''; return; }
   const s=Math.max(0,Math.ceil((DRAW.roundEnd-Date.now())/1000));
-  $('timer').textContent = DRAW.phase==='drawing' ? ('⏱ '+s+'초') : ('다음 라운드 '+s+'초'); }
+  $('timer').textContent = DRAW.phase==='drawing' ? ('⏱ '+s+'초')
+    : DRAW.phase==='choosing' ? ('단어 선택 '+s+'초') : ('다음 라운드 '+s+'초'); }
+function showWordPick(words){ const el=$('wordPick'); el.innerHTML='';
+  (words||[]).forEach((w,i)=>{ const b=document.createElement('button'); b.type='button';
+    b.className='btn primary'; b.textContent=w;
+    b.onclick=()=>{ send({t:'pick',i}); hideWordPick(); }; el.appendChild(b); });
+  el.classList.remove('hidden'); }
+function hideWordPick(){ $('wordPick').classList.add('hidden'); $('wordPick').innerHTML=''; }
+function showUndoBar(from){ const el=$('undoBar'); el.innerHTML='';
+  const s=document.createElement('span'); s.style.cssText='align-self:center;font-size:13px;font-weight:700;flex:2';
+  s.textContent='↩ '+from+'님이 무르기를 요청했어요';
+  const ok=document.createElement('button'); ok.type='button'; ok.className='btn primary'; ok.textContent='수락';
+  ok.onclick=()=>{ send({t:'undoRes',ok:true}); hideUndoBar(); };
+  const no=document.createElement('button'); no.type='button'; no.className='btn coral'; no.textContent='거절';
+  no.onclick=()=>{ send({t:'undoRes',ok:false}); hideUndoBar(); };
+  el.appendChild(s); el.appendChild(ok); el.appendChild(no); el.classList.remove('hidden'); }
+function hideUndoBar(){ $('undoBar').classList.add('hidden'); $('undoBar').innerHTML=''; }
+function showConn(v){ $('connOv').classList.toggle('hidden',!v); }
 function renderScores(list){ const el=$('scores'); el.innerHTML='';
   (list||[]).slice().sort((a,b)=>b.score-a.score).forEach(p=>{
     const d=document.createElement('div'); d.className='sc'+(p.online?'':' off')+(p.drawer?' drawer':'');
@@ -625,6 +700,7 @@ function aui(){ if(MODE!=='alka')return;
     el.querySelector('.pj').classList.add('hidden'); }              // no team mode in alka
   $('btnSolo').classList.toggle('hidden', !(myRole && !SOLO && !(seats&&seats[1]&&seats[2])));
   $('wobBox').classList.toggle('hidden', !(myRole===1||myRole===2));
+  $('btnResign').classList.toggle('hidden', !(myRole && !AL.winner && !SOLO && !!(seats&&seats[1]&&seats[2])));
   const t=$('turnmsg'); t.className='';
   $('btnRestart').classList.toggle('hidden', !(AL.winner&&(myRole===1||myRole===2)));
   $('btnRestart').disabled=false;
@@ -806,7 +882,8 @@ function genChart(seed){ const rnd=mulberry32(seed), bpm=120+Math.floor(rnd()*5)
   return {bpm,notes,duration:D}; }
 function beatLobbyUi(){ if(MODE!=='beat')return;
   $('wordtxt').textContent='🎵 준비되면 시작! (D·F·J·K / 터치 4레인)'; $('timer').textContent='';
-  $('btnBegin').classList.remove('hidden'); $('turnmsg').textContent='';
+  $('btnBegin').classList.remove('hidden'); $('beatCfg').classList.remove('hidden');
+  $('turnmsg').textContent='';
   renderBeatBoard(); brenderIdle(); }
 function renderBeatBoard(){ if(MODE!=='beat'||!BEAT)return; const el=$('scores'); el.innerHTML='';
   const rows=(BEAT.players||[]).map(p=>({name:p.name, s:(BEAT.live[p.name]?BEAT.live[p.name].s:p.score)|0,
@@ -819,21 +896,27 @@ function renderBeatBoard(){ if(MODE!=='beat'||!BEAT)return; const el=$('scores')
     const nm=document.createElement('span'); nm.textContent=(r.name===me?'🎧 ':'')+r.name+(r.c>1?` ×${r.c}`:'');
     const pt=document.createElement('span'); pt.className='pt'; pt.textContent=r.s;
     d.appendChild(nm); d.appendChild(pt); el.appendChild(d); }); }
-/* judgment */
+/* judgment (BOFF: audio-offset calibration in ms — shifts JUDGING, not visuals) */
+let BOFF=Math.max(-150,Math.min(150,+(localStorage.getItem('beatOffset')||0)||0));
+$('offRange').value=BOFF; $('offVal').textContent=(BOFF>0?'+':'')+BOFF+'ms';
+$('offRange').addEventListener('input',()=>{ BOFF=+$('offRange').value;
+  $('offVal').textContent=(BOFF>0?'+':'')+BOFF+'ms'; });
+$('offRange').addEventListener('change',()=>localStorage.setItem('beatOffset',String(BOFF)));
 function hitLane(l){ const B=BEAT; if(MODE!=='beat'||!B||B.phase!=='playing'||B.finished)return;
   B.press[l]=performance.now();
-  const st=songTime(); if(st<0)return;
-  let best=-1,bd=1e9;
+  const st=songTime()-BOFF; if(st<0)return;
+  let best=-1,bd=1e9,bs=0;
   for(let k=Math.max(0,B.next-4);k<B.chart.notes.length;k++){ const n=B.chart.notes[k];
     if(n.hit||n.miss||n.l!==l){ if(n.t-st>200)break; continue; }
     const d=n.t-st; if(d>200)break;
-    const ad=Math.abs(d); if(ad<bd){ bd=ad; best=k; } }
+    const ad=Math.abs(d); if(ad<bd){ bd=ad; bs=d; best=k; } }
   if(best<0||bd>180) return;                       // stray tap: no penalty
   const n=B.chart.notes[best]; n.hit=true;
   let pts,j; if(bd<=55){pts=300;j='PERFECT';} else if(bd<=120){pts=150;j='GOOD';} else {pts=50;j='BAD';}
   B.sum+=pts; B.score+=pts+Math.min(100,B.combo); B.combo++;
   B.maxCombo=Math.max(B.maxCombo,B.combo);
-  B.judge={j,at:performance.now()}; B.dirty=true; blip(pts); }
+  B.judge={j,at:performance.now(),sub:(j!=='PERFECT'&&bd>25)?(bs>0?'EARLY':'LATE'):''};
+  B.dirty=true; blip(pts); }
 document.addEventListener('keydown',e=>{ ensureAudio();
   if(MODE!=='beat'||!BEAT||BEAT.phase!=='playing'||e.repeat)return;
   const ae=document.activeElement;
@@ -845,10 +928,10 @@ cv.addEventListener('pointerdown',e=>{ if(MODE!=='beat')return; ensureAudio();
   hitLane(Math.max(0,Math.min(3,Math.floor((x-60)/120)))); });   // edge taps snap to nearest lane
 /* loop */
 function beatTick(){ const B=BEAT; if(!B||B.phase!=='playing'){ stopBeat(); return; }
-  const st=songTime(), notes=B.chart.notes;
+  const st=songTime(), stJ=st-BOFF, notes=B.chart.notes;   // misses judged on calibrated time
   while(B.next<notes.length){ const n=notes[B.next];
     if(n.hit){ B.next++; continue; }
-    if(n.t<st-180){ n.miss=true; B.combo=0; B.judge={j:'MISS',at:performance.now()}; B.next++; B.dirty=true; continue; }
+    if(n.t<stJ-180){ n.miss=true; B.combo=0; B.judge={j:'MISS',at:performance.now()}; B.next++; B.dirty=true; continue; }
     break; }
   scheduleAudio(st);
   if(st>B.chart.duration+400&&!B.finished){ B.finished=true;
@@ -893,7 +976,10 @@ function brender(st,done){ const B=BEAT;
   if(B.judge&&pn-B.judge.at<450){ const a=1-(pn-B.judge.at)/450;
     cx.globalAlpha=a; cx.font='800 30px Pretendard,sans-serif';
     cx.fillStyle=B.judge.j==='PERFECT'?'#3ee08a':B.judge.j==='GOOD'?'#35dcff':B.judge.j==='BAD'?'#ffb454':'#ff6f61';
-    cx.fillText(B.judge.j,300,440); cx.globalAlpha=1; }
+    cx.fillText(B.judge.j,300,440);
+    if(B.judge.sub){ cx.font='800 15px Pretendard,sans-serif'; cx.fillStyle='rgba(238,243,251,.8)';
+      cx.fillText(B.judge.sub==='EARLY'?'▲ 빠름':'▼ 느림',300,466); }
+    cx.globalAlpha=1; }
   if(st<0){ cx.fillStyle='#fff'; cx.font='800 72px Pretendard,sans-serif';
     cx.fillText(String(Math.ceil(-st/1000)),300,300); }
   if(done){ cx.fillStyle='#fff'; cx.font='800 44px Pretendard,sans-serif'; cx.fillText('🏁 완주!',300,300); } }
@@ -1030,10 +1116,14 @@ function tetLock(){ const c=TET.cur; let died=false;
     TET.board.unshift(Array(10).fill(0)); cleared++; y++; } }
   TET.dirty=true;                                // board changed -> opponents' mini view needs it
   if(cleared){ TET.score+=[0,100,300,500,800][cleared]*tetLevel(); TET.lines+=cleared;
-    const out=[0,0,1,2,4][cleared]; if(out) send({t:'tgarb',n:out}); }
-  // apply pending garbage (gray rows with one hole)
-  if(TET.pend>0){ for(let k=0;k<TET.pend;k++){ TET.board.shift();
-      const row2=Array(10).fill('G'); row2[(Math.random()*10)|0]=0; TET.board.push(row2); }
+    let out=[0,0,1,2,4][cleared];
+    if(TET.pend>0&&out>0){ const c2=Math.min(TET.pend,out);      // 상쇄: my clears counter incoming garbage
+      TET.pend-=c2; out-=c2; if(c2) log('sys','🛡 가비지 '+c2+'줄 상쇄!'); }
+    if(out) send({t:'tgarb',n:out}); }
+  // apply pending garbage (gray rows, ONE hole column per attack -> fair, diggable)
+  if(TET.pend>0){ const hole=(Math.random()*10)|0;
+    for(let k=0;k<TET.pend;k++){ TET.board.shift();
+      const row2=Array(10).fill('G'); row2[hole]=0; TET.board.push(row2); }
     TET.pend=0; }
   TET.groundedAt=null; TET.lockResets=0; TET.holdUsed=false;
   if(cleared) sfxClear(cleared);
