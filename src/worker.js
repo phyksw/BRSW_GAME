@@ -106,7 +106,7 @@ export class GameRoom {
       const a = g.a;
       return { t: 'state', mode: 'alka', role, seats: this.seatsPub(g), solo: this.isSolo(g),
                turn: a.turn, winner: a.winner, round: a.round, phase: a.phase, stones: a.stones,
-               wobble: a.wobble | 0 };
+               wobble: a.wobble | 0, started: a.moves > 0 };
     }
     if (g.mode === 'beat') {
       const b = g.b;
@@ -468,15 +468,15 @@ export class GameRoom {
       return;
     }
 
-    if (m.t === 'wobble') {                       // alka: aim-noise level (0 정확 .. 3 대삑), players only
+    if (m.t === 'wobble') {                       // alka: aim-noise sigma in degrees (0-15), players only
       if (g.mode !== 'alka' || (att.role !== 1 && att.role !== 2)) return;
-      const v = Math.max(0, Math.min(3, m.v | 0));
+      if (g.a.moves > 0 && !g.a.winner) return;   // locked while a game is in progress
+      const v = Math.max(0, Math.min(15, m.v | 0));
       if (g.a.wobble === v) return;
       g.a.wobble = v;
       await this.save();
       this.bcast({ t: 'wobble', v });
-      const names = ['🎯 정확', '살짝삑 (±3°)', '삑사리 (±6°)', '대삑 (±10°)'];
-      this.bcast({ t: 'sys', text: `${att.name}님이 조준 모드를 [${names[v]}]로 변경` });
+      this.bcast({ t: 'sys', text: `${att.name}님이 조준 삑을 ${v ? '±' + v + '°' : '정확'}으로 설정` });
       return;
     }
     if (m.t === 'flick') {                        // alka: turn player launches ONE of their stones
@@ -554,7 +554,7 @@ export class GameRoom {
       if (!g.a.winner) return;
       const s1 = g.seats[1], s2 = g.seats[2];
       g.seats[1] = s2; g.seats[2] = s1;
-      g.a = { ...emptyAlka(), round: (g.a.round || 1) + 1 };
+      g.a = { ...emptyAlka(), round: (g.a.round || 1) + 1, wobble: g.a.wobble | 0 };  // 삑 setting survives rematches
       await this.save();
       for (const w of this.ctx.getWebSockets()) {
         const at = w.deserializeAttachment() || {}; let role = 0;

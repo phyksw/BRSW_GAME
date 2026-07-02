@@ -92,6 +92,13 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
 .pl .pj{flex:0 0 auto;font-family:var(--sans);font-size:10.5px;font-weight:700;padding:4px 9px;
   border-radius:8px;background:#fff;border:1px solid rgba(18,181,166,.45);color:var(--cyan);cursor:pointer}
 .pl .pj:hover{filter:brightness(1.2)}
+/* alka 삑 slider */
+.wob{display:flex;align-items:center;gap:8px;background:#eef1f7;border:1.5px solid #cdd5e3;
+  border-radius:12px;padding:8px 13px;font-size:12.5px;font-weight:800;color:var(--text);white-space:nowrap}
+.wob input[type=range]{width:110px;accent-color:var(--coral);cursor:pointer}
+.wob input[type=range]:disabled{opacity:.4;cursor:not-allowed}
+.wob #wobVal{min-width:38px;color:var(--coral)}
+.wob.locked{opacity:.65}
 #watch{font-size:11px;color:var(--mute);text-align:right}
 #log{flex:1;background:var(--card2);border:1.5px solid var(--line);border-radius:12px;
   padding:10px 12px;overflow-y:auto;font-size:12.5px;line-height:1.55;min-height:180px;max-height:320px}
@@ -103,7 +110,7 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
 </head>
 <body>
 <div class="wrap">
-  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.14</span></header>
+  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.15</span></header>
 
   <!-- lobby -->
   <div id="lobby" class="card">
@@ -139,7 +146,9 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
       <div class="row" style="width:100%">
         <button class="btn primary hidden" id="btnBegin">🎨 라운드 시작</button>
         <button class="btn hidden" id="btnSolo">🙋 혼자 두기 (양쪽 조작)</button>
-        <button class="btn hidden" id="btnWobble">🎯 조준: 정확</button>
+        <div class="wob hidden" id="wobBox">🎯 삑
+          <input type="range" id="wobRange" min="0" max="15" step="1" value="0">
+          <span id="wobVal">정확</span></div>
         <button class="btn coral hidden" id="btnRestart">↻ 새 판 (흑백 교대)</button>
         <button class="btn" id="btnLeave" style="flex:0 0 auto">나가기</button>
       </div>
@@ -253,8 +262,9 @@ function handle(m){
   if(m.t==='state'&&m.mode==='alka'){ setMode('alka'); stopAsim(); selStone=-1; aim=null;
     seats=m.seats; myRole=m.role; SOLO=!!m.solo;
     AL={stones:m.stones.map(s=>({x:s.x,y:s.y,o:s.o,a:s.a,vx:0,vy:0})), turn:m.turn, winner:m.winner,
-        phase:m.phase||'idle', auth:JSON.stringify(m.stones), mine:false, wobble:m.wobble|0};
-    syncWobbleBtn();
+        phase:m.phase||'idle', auth:JSON.stringify(m.stones), mine:false,
+        wobble:m.wobble|0, locked:!!m.started&&!m.winner};
+    syncWobUi();
     aui(); arender();
     log('sys', myRole? `당신은 ${myRole===1?'흑(아래)':'백(위)'} — 라운드 ${m.round}. 내 돌을 당겨서 튕기세요!` : '관전 모드'); return; }
   if(m.t==='flick'){ if(MODE!=='alka')return; const s=AL.stones[m.i]; if(!s||!s.a)return;
@@ -263,9 +273,10 @@ function handle(m){
     m.stones.forEach((s,k)=>{ const t=AL.stones[k]; if(t.a&&!s.a) addFader(t); });   // authoritative knock-outs cry too
     m.stones.forEach((s,k)=>{ const t=AL.stones[k]; t.x=s.x; t.y=s.y; t.a=s.a; t.vx=0; t.vy=0; });
     AL.turn=m.turn; AL.winner=m.winner; AL.phase='idle'; AL.mine=false; AL.auth=JSON.stringify(m.stones);
+    AL.locked=!m.winner; syncWobUi();            // unlock when the game ends
     aui(); arender();
     if(m.winner) log('sys',(m.winner===1?'흑':'백')+' 승리! 🏆'); return; }
-  if(m.t==='wobble'){ if(MODE!=='alka')return; AL.wobble=m.v|0; syncWobbleBtn(); return; }
+  if(m.t==='wobble'){ if(MODE!=='alka')return; AL.wobble=m.v|0; syncWobUi(); return; }
   if(m.t==='abort'){ if(MODE!=='alka')return; stopAsim(); selStone=-1; aim=null;
     JSON.parse(AL.auth).forEach((s,k)=>{ const t=AL.stones[k]; if(t){ t.x=s.x; t.y=s.y; t.a=s.a; t.vx=0; t.vy=0; } });
     AL.phase='idle'; AL.mine=false; aui(); arender(); return; }
@@ -487,7 +498,7 @@ function setMode(mo){ MODE=mo;
   if(mo!=='draw') stopTimer();
   $('btnBegin').textContent = mo==='beat' ? '🎵 라운드 시작' : mo==='tet' ? '🧱 게임 시작' : '🎨 라운드 시작';
   $('tools').classList.add('hidden'); $('btnBegin').classList.add('hidden'); $('btnSolo').classList.add('hidden');
-  $('btnWobble').classList.add('hidden'); $('tpad').classList.add('hidden');
+  $('wobBox').classList.add('hidden'); $('tpad').classList.add('hidden');
   if(mo!=='tet') stopTet();
   document.querySelectorAll('.pj').forEach(b=>b.classList.add('hidden'));
   if(multi) $('btnRestart').classList.add('hidden'); }
@@ -565,7 +576,7 @@ function aui(){ if(MODE!=='alka')return;
     el.classList.toggle('me', myRole===s);
     el.querySelector('.pj').classList.add('hidden'); }              // no team mode in alka
   $('btnSolo').classList.toggle('hidden', !(myRole && !SOLO && !(seats&&seats[1]&&seats[2])));
-  $('btnWobble').classList.toggle('hidden', !(myRole===1||myRole===2));
+  $('wobBox').classList.toggle('hidden', !(myRole===1||myRole===2));
   const t=$('turnmsg'); t.className='';
   $('btnRestart').classList.toggle('hidden', !(AL.winner&&(myRole===1||myRole===2)));
   $('btnRestart').disabled=false;
@@ -649,7 +660,7 @@ function arender(){ if(MODE!=='alka')return;
     const dx=aim.sx-aim.x, dy=aim.sy-aim.y, p=Math.hypot(dx,dy);           // pull vector = drag start - current
     if(p>6){ const cap=Math.min(1,p/320);
       if(AL.wobble>0){                                                     // faint ±2σ cone
-        const sig=WOBBLE_SIG[AL.wobble]*Math.PI/180*2, base=Math.atan2(dy,dx), LEN=Math.min(200,p*1.1);
+        const sig=AL.wobble*Math.PI/180*2, base=Math.atan2(dy,dx), LEN=Math.min(200,p*1.1);
         cx.strokeStyle='rgba(255,255,255,.35)'; cx.lineWidth=2; cx.setLineDash([4,5]);
         for(const o of [-sig,sig]){ cx.beginPath(); cx.moveTo(an0.x,an0.y);
           cx.lineTo(an0.x+Math.cos(base+o)*LEN, an0.y+Math.sin(base+o)*LEN); cx.stroke(); }
@@ -683,17 +694,22 @@ cv.addEventListener('pointerdown',e=>{ if(MODE!=='alka')return;
   try{cv.setPointerCapture(e.pointerId);}catch(err){} e.preventDefault(); arender(); });
 cv.addEventListener('pointermove',e=>{ if(MODE!=='alka'||!aim)return;
   const [x,y]=evPt(e); aim.x=x; aim.y=y; arender(); });
-const WOBBLE_SIG=[0,3,6,10];                     // degrees of gaussian aim noise per level
-const WOBBLE_LBL=['🎯 조준: 정확','🎯 조준: 살짝삑 ±3°','🎯 조준: 삑사리 ±6°','🎯 조준: 대삑 ±10°'];
 function gaussN(){ let u=0,v=0; while(!u)u=Math.random(); while(!v)v=Math.random();
   return Math.max(-2.5,Math.min(2.5,Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v))); }
-function syncWobbleBtn(){ $('btnWobble').textContent=WOBBLE_LBL[AL.wobble|0]||WOBBLE_LBL[0]; }
-$('btnWobble').onclick=()=>send({t:'wobble',v:((AL.wobble|0)+1)%4});
+function syncWobUi(){ const v=AL.wobble|0, locked=!!AL.locked;
+  $('wobRange').value=v; $('wobVal').textContent=v?('±'+v+'°'):'정확';
+  $('wobRange').disabled=locked||!(myRole===1||myRole===2);
+  $('wobBox').classList.toggle('locked',locked);
+  $('wobBox').title=locked?'게임 중에는 변경할 수 없어요 (새 판에서 조절)':'조준 방향에 가우시안 노이즈 (±σ)'; }
+$('wobRange').addEventListener('input',()=>{ const v=+$('wobRange').value;
+  $('wobVal').textContent=v?('±'+v+'°'):'정확'; });
+$('wobRange').addEventListener('change',()=>send({t:'wobble',v:+$('wobRange').value}));
 function flickStone(i,vx,vy){                    // my shot: local sim is authoritative -> settle
   const s=AL.stones[i]; if(!s||!s.a)return;
   if(AL.wobble>0){                               // 삑사리: gaussian noise on the aim DIRECTION
-    const sig=WOBBLE_SIG[AL.wobble]*Math.PI/180, th=Math.atan2(vy,vx)+gaussN()*sig, sp=Math.hypot(vx,vy);
+    const sig=AL.wobble*Math.PI/180, th=Math.atan2(vy,vx)+gaussN()*sig, sp=Math.hypot(vx,vy);
     vx=Math.cos(th)*sp; vy=Math.sin(th)*sp; }
+  AL.locked=true; syncWobUi();                   // first shot locks the setting for the game
   s.vx=vx; s.vy=vy; AL.phase='sim'; AL.mine=true; selStone=-1; aim=null;
   send({t:'flick',i,vx:Math.round(vx),vy:Math.round(vy)});
   startAsim(); aui(); }
