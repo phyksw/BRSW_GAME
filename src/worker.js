@@ -138,7 +138,7 @@ export class GameRoom {
   async startRound(g) {
     const d = g.d;
     const online = d.order.filter(t => d.players[t].online);
-    if (online.length < 2) {
+    if (online.length < 1) {                     // 1 player = solo practice sketching
       d.phase = 'lobby'; d.drawer = null; d.word = null; await this.save();
       this.bcast({ t: 'phase', phase: 'lobby', players: this.drawPlayersPub(d) });
       return;
