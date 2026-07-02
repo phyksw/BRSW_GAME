@@ -29,6 +29,7 @@ const emptyGame = (mode) => ({
   d: null,                           // ── draw: {players,order,drawer,word,roundN,roundEnd,phase,guessed}
   a: null,                           // ── alka: {stones,turn,winner,round,phase,moves}
   b: null,                           // ── beat: {players,order,phase,seed,startAt,roundN}
+  tt: null,                          // ── tet:  {players,order,phase,seed,startAt,roundN}
 });
 const emptyDraw = () => ({ players: {}, order: [], drawer: null, word: null,
   roundN: 0, roundEnd: 0, phase: 'lobby', guessed: {} });
@@ -37,10 +38,13 @@ const emptyAlka = () => ({ stones: (() => { const st = [];
     for (let k = 0; k < 5; k++) st.push({ x: 150 + k * 75, y: 140, o: 2, a: 1 });
     for (let k = 0; k < 5; k++) st.push({ x: 150 + k * 75, y: 460, o: 1, a: 1 });
     return st; })(),
-  turn: 1, winner: 0, round: 1, phase: 'idle', moves: 0 });
+  turn: 1, winner: 0, round: 1, phase: 'idle', moves: 0, wobble: 0 });   // wobble: aim-noise level 0-3
 // beat (리듬): same seeded chart everywhere, judged LOCALLY; server only syncs start time + scores
 const BEAT_D = 45_000;
 const emptyBeat = () => ({ players: {}, order: [], phase: 'lobby', seed: 0, startAt: 0, roundN: 0 });
+// tet (테트리스): same seeded 7-bag everywhere, played locally; server relays scores + garbage attacks
+const TET_MAX = 600_000;   // hard cap per round (alarm forces results)
+const emptyTet = () => ({ players: {}, order: [], phase: 'lobby', seed: 0, startAt: 0, roundN: 0 });
 
 export class GameRoom {
   constructor(ctx) {
@@ -101,12 +105,18 @@ export class GameRoom {
     if (g.mode === 'alka') {
       const a = g.a;
       return { t: 'state', mode: 'alka', role, seats: this.seatsPub(g), solo: this.isSolo(g),
-               turn: a.turn, winner: a.winner, round: a.round, phase: a.phase, stones: a.stones };
+               turn: a.turn, winner: a.winner, round: a.round, phase: a.phase, stones: a.stones,
+               wobble: a.wobble | 0 };
     }
     if (g.mode === 'beat') {
       const b = g.b;
       return { t: 'state', mode: 'beat', phase: b.phase, seed: b.seed, startAt: b.startAt,
                now: Date.now(), roundN: b.roundN, players: this.beatPub(b) };
+    }
+    if (g.mode === 'tet') {
+      const tt = g.tt;
+      return { t: 'state', mode: 'tet', phase: tt.phase, seed: tt.seed, startAt: tt.startAt,
+               now: Date.now(), roundN: tt.roundN, players: this.tetPub(tt) };
     }
     return { t: 'state', mode: 'omok', board: g.board.join(''), turn: g.turn, winner: g.winner, winLine: g.winLine,
              round: g.round, last: g.last, role, seats: this.seatsPub(g), solo: this.isSolo(g),
@@ -134,6 +144,23 @@ export class GameRoom {
         return { name: p.name, score: p.score | 0, maxCombo: p.maxCombo | 0, acc: p.acc || 0, finished: !!p.finished }; })
       .sort((x, y) => y.score - x.score);
     this.bcast({ t: 'bres', roundN: b.roundN, list });
+  }
+  /* ---- tet-mode helpers ---- */
+  tetPub(tt) {
+    return tt.order.map(t => { const p = tt.players[t];
+      return { name: p.name, online: !!p.online, playing: !!p.playing, finished: !!p.finished,
+               score: p.score | 0, lines: p.lines | 0 }; });
+  }
+  async tetResults(g) {
+    const tt = g.tt;
+    if (tt.phase !== 'playing') return;
+    tt.phase = 'lobby';
+    await this.save();
+    const list = tt.order.filter(t => tt.players[t].playing)
+      .map(t => { const p = tt.players[t];
+        return { name: p.name, score: p.score | 0, lines: p.lines | 0 }; })
+      .sort((x, y) => y.score - x.score);
+    this.bcast({ t: 'tres', roundN: tt.roundN, list });
   }
   async startRound(g) {
     const d = g.d;
@@ -185,6 +212,13 @@ export class GameRoom {
       }
       return;
     }
+    if (g.mode === 'tet' && g.tt) {              // round hard cap
+      if (g.tt.phase === 'playing') {
+        if (now >= g.tt.startAt + TET_MAX - 1_000) await this.tetResults(g);
+        else await this.ctx.storage.setAlarm(g.tt.startAt + TET_MAX);
+      }
+      return;
+    }
     if (g.mode !== 'draw' || !g.d) return;
     const d = g.d;
     if (now < d.roundEnd - 250) { await this.ctx.storage.setAlarm(d.roundEnd); return; }  // stale alarm
@@ -217,26 +251,30 @@ export class GameRoom {
       const token = String(m.token || '').slice(0, 40);
       if (!token) return;
       let dirty = false;
-      if (!g.mode) { g.mode = ['draw', 'alka', 'beat'].includes(m.mode) ? m.mode : 'omok';
+      if (!g.mode) { g.mode = ['draw', 'alka', 'beat', 'tet'].includes(m.mode) ? m.mode : 'omok';
         if (g.mode === 'draw') g.d = emptyDraw();
         else if (g.mode === 'alka') g.a = emptyAlka();
-        else if (g.mode === 'beat') g.b = emptyBeat(); dirty = true; }
-      if (g.mode === 'draw' || g.mode === 'beat') {             // draw/beat: everyone is a player
-        const pool = g.mode === 'draw' ? g.d : g.b;
+        else if (g.mode === 'beat') g.b = emptyBeat();
+        else if (g.mode === 'tet') g.tt = emptyTet(); dirty = true; }
+      if (g.mode === 'draw' || g.mode === 'beat' || g.mode === 'tet') {   // pool games: everyone plays
+        const pool = g.mode === 'draw' ? g.d : g.mode === 'beat' ? g.b : g.tt;
         const live = this.liveTokens(ws);
         for (const t of pool.order) if (pool.players[t].online && !live.has(t)) { pool.players[t].online = false; dirty = true; }
         let wasHere = false;
         if (!pool.players[token]) {
           pool.players[token] = g.mode === 'draw'
             ? { name, score: 0, online: true }
-            : { name, online: true, playing: false, finished: false, score: 0, maxCombo: 0, acc: 0 };
+            : g.mode === 'beat'
+            ? { name, online: true, playing: false, finished: false, score: 0, maxCombo: 0, acc: 0 }
+            : { name, online: true, playing: false, finished: false, score: 0, lines: 0 };
           pool.order.push(token); dirty = true;
         } else { const p = pool.players[token]; wasHere = p.online === true && live.has(token);
                  if (!p.online || p.name !== name) { p.online = true; p.name = name; dirty = true; } }
         ws.serializeAttachment({ token, name, role: 0 });
         if (dirty) await this.save();
         ws.send(JSON.stringify(this.stateFor(g, 0, token)));
-        this.bcast({ t: 'players', players: g.mode === 'draw' ? this.drawPlayersPub(pool) : this.beatPub(pool) }, ws);
+        this.bcast({ t: 'players', players: g.mode === 'draw' ? this.drawPlayersPub(pool)
+                     : g.mode === 'beat' ? this.beatPub(pool) : this.tetPub(pool) }, ws);
         if (!wasHere) this.bcast({ t: 'sys', text: `${name} 입장` }, ws);
         return;
       }
@@ -314,6 +352,47 @@ export class GameRoom {
                      roundN: b.roundN, players: this.beatPub(b) });
         return;
       }
+      if (g.mode === 'tet' && g.tt && g.tt.players[att.token]) {
+        const tt = g.tt;
+        if (tt.phase === 'playing') return;
+        tt.roundN++; tt.seed = (Math.random() * 0x7fffffff) | 0; tt.startAt = Date.now() + 3500; tt.phase = 'playing';
+        for (const t of tt.order) { const p = tt.players[t];
+          p.playing = !!p.online; p.finished = false; p.score = 0; p.lines = 0; }
+        await this.save();
+        await this.ctx.storage.setAlarm(tt.startAt + TET_MAX);
+        this.bcast({ t: 'tstart', seed: tt.seed, startAt: tt.startAt, now: Date.now(),
+                     roundN: tt.roundN, players: this.tetPub(tt) });
+        return;
+      }
+      return;
+    }
+    if (m.t === 'tscore') {                       // tet: live score/lines relay
+      if (g.mode !== 'tet' || !g.tt || g.tt.phase !== 'playing') return;
+      const p = g.tt.players[att.token];
+      if (!p || !p.playing || p.finished) return;
+      p.score = Math.max(0, Math.min(9_999_999, m.s | 0));
+      p.lines = Math.max(0, Math.min(9999, m.l | 0));
+      this.bcast({ t: 'tscore', name: att.name, s: p.score, l: p.lines }, ws);
+      return;
+    }
+    if (m.t === 'tgarb') {                        // tet: garbage attack -> everyone else
+      if (g.mode !== 'tet' || !g.tt || g.tt.phase !== 'playing') return;
+      const p = g.tt.players[att.token];
+      if (!p || !p.playing || p.finished) return;
+      const n = Math.max(1, Math.min(8, m.n | 0));
+      this.bcast({ t: 'tgarb', n, from: att.name }, ws);
+      return;
+    }
+    if (m.t === 'tfin') {                         // tet: player topped out
+      if (g.mode !== 'tet' || !g.tt || g.tt.phase !== 'playing') return;
+      const tt = g.tt, p = tt.players[att.token];
+      if (!p || !p.playing || p.finished) return;
+      p.finished = true;
+      p.score = Math.max(0, Math.min(9_999_999, m.s | 0));
+      p.lines = Math.max(0, Math.min(9999, m.l | 0));
+      await this.save();
+      const waiting = tt.order.filter(t => tt.players[t].playing && tt.players[t].online && !tt.players[t].finished);
+      if (!waiting.length) await this.tetResults(g);
       return;
     }
     if (m.t === 'bscore') {                       // beat: live score relay (judged locally)
@@ -386,6 +465,17 @@ export class GameRoom {
       return;
     }
 
+    if (m.t === 'wobble') {                       // alka: aim-noise level (0 정확 .. 3 대삑), players only
+      if (g.mode !== 'alka' || (att.role !== 1 && att.role !== 2)) return;
+      const v = Math.max(0, Math.min(3, m.v | 0));
+      if (g.a.wobble === v) return;
+      g.a.wobble = v;
+      await this.save();
+      this.bcast({ t: 'wobble', v });
+      const names = ['🎯 정확', '살짝삑 (±3°)', '삑사리 (±6°)', '대삑 (±10°)'];
+      this.bcast({ t: 'sys', text: `${att.name}님이 조준 모드를 [${names[v]}]로 변경` });
+      return;
+    }
     if (m.t === 'flick') {                        // alka: turn player launches ONE of their stones
       if (g.mode !== 'alka') return;
       const a = g.a;
@@ -518,6 +608,17 @@ export class GameRoom {
       if (b.phase === 'playing') {               // everyone left mid-song still finishes the round
         const waiting = b.order.filter(t => b.players[t].playing && b.players[t].online && !b.players[t].finished);
         if (!waiting.length) await this.beatResults(g);
+      }
+      return;
+    }
+    if (g.mode === 'tet' && g.tt) {
+      const tt = g.tt;
+      if (!still && tt.players[att.token]) { tt.players[att.token].online = false; await this.save(); }
+      this.bcast({ t: 'players', players: this.tetPub(tt) });
+      if (att.name && !still) this.bcast({ t: 'sys', text: `${att.name} 퇴장` });
+      if (tt.phase === 'playing') {
+        const waiting = tt.order.filter(t => tt.players[t].playing && tt.players[t].online && !tt.players[t].finished);
+        if (!waiting.length) await this.tetResults(g);
       }
       return;
     }
