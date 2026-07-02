@@ -83,6 +83,9 @@ button.gitem{font-family:var(--sans);color:var(--text);text-align:left;cursor:po
 .pl .st{margin-left:auto;font-size:10.5px;color:var(--mute)}
 .pl.turn{border-color:rgba(62,224,138,.55)}
 .pl.me .nm::after{content:" (나)";color:var(--cyan);font-size:11px}
+.pl .pj{flex:0 0 auto;font-family:var(--sans);font-size:10.5px;font-weight:700;padding:4px 9px;
+  border-radius:8px;background:var(--card2);border:1px solid rgba(53,220,255,.4);color:var(--cyan);cursor:pointer}
+.pl .pj:hover{filter:brightness(1.2)}
 #watch{font-size:11px;color:var(--mute);text-align:right}
 #log{flex:1;background:var(--card2);border:1px solid var(--line);border-radius:12px;
   padding:10px 12px;overflow-y:auto;font-size:12.5px;line-height:1.55;min-height:180px;max-height:320px}
@@ -127,13 +130,14 @@ button.gitem{font-family:var(--sans);color:var(--text);text-align:left;cursor:po
       <div class="tools hidden" id="tools"></div>
       <div class="row" style="width:100%">
         <button class="btn primary hidden" id="btnBegin">🎨 라운드 시작</button>
+        <button class="btn hidden" id="btnSolo">🙋 혼자 두기 (양쪽 조작)</button>
         <button class="btn coral hidden" id="btnRestart">↻ 새 판 (흑백 교대)</button>
         <button class="btn" id="btnLeave" style="flex:0 0 auto">나가기</button>
       </div>
     </div>
     <div class="card side">
-      <div class="pl" id="pl1"><span class="stone b"></span><span class="nm">—</span><span class="st"></span></div>
-      <div class="pl" id="pl2"><span class="stone w"></span><span class="nm">—</span><span class="st"></span></div>
+      <div class="pl" id="pl1"><span class="stone b"></span><span class="nm">—</span><button type="button" class="pj hidden" data-side="1">+팀참가</button><span class="st"></span></div>
+      <div class="pl" id="pl2"><span class="stone w"></span><span class="nm">—</span><button type="button" class="pj hidden" data-side="2">+팀참가</button><span class="st"></span></div>
       <div class="scores hidden" id="scores"></div>
       <div id="watch"></div>
       <div id="log"></div>
@@ -161,7 +165,8 @@ let MODE='omok', selMode='omok', timerIv=null,
     DRAW={phase:'lobby',roundEnd:0,youDrawer:false,word:null,mask:''},
     tool={c:0,w:4},
     AL={stones:[],turn:1,winner:0,phase:'idle',auth:'[]',mine:false},
-    BEAT=null;   // set by initBeat()
+    BEAT=null,   // set by initBeat()
+    SOLO=false, YOUIDX=0;   // solo (one player, both seats) / my member index within my team
 
 /* ---- lobby ---- */
 const CODE_CHARS='ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -179,7 +184,7 @@ $('code').addEventListener('keydown',e=>{ if(e.key==='Enter') $('btnJoin').click
 
 function enter(code){ room=code; location.hash=code; inGame=true;
   board=new Array(CELLS).fill(0); turn=1; winner=0; winLine=null; lastMove=-1; hover=-1;   // reset per-room state
-  seats={1:null,2:null}; myRole=0; retry=0; clearReconn(); $('log').innerHTML='';
+  seats={1:null,2:null}; myRole=0; retry=0; SOLO=false; YOUIDX=0; clearReconn(); $('log').innerHTML='';
   DRAW={phase:'lobby',roundEnd:0,youDrawer:false,word:null,mask:''};
   AL={stones:[],turn:1,winner:0,phase:'idle',auth:'[]',mine:false}; stopAsim();
   initBeat(); stopBeat();
@@ -234,7 +239,7 @@ function handle(m){
   if(m.t==='players'){ if(MODE==='beat'&&BEAT){ BEAT.players=m.players||[]; renderBeatBoard(); } else renderScores(m.players); return; }
   /* ---- alka ---- */
   if(m.t==='state'&&m.mode==='alka'){ setMode('alka'); stopAsim();
-    seats=m.seats; myRole=m.role;
+    seats=m.seats; myRole=m.role; SOLO=!!m.solo;
     AL={stones:m.stones.map(s=>({x:s.x,y:s.y,o:s.o,a:s.a,vx:0,vy:0})), turn:m.turn, winner:m.winner,
         phase:m.phase||'idle', auth:JSON.stringify(m.stones), mine:false};
     aui(); arender();
@@ -273,32 +278,51 @@ function handle(m){
     beatLobbyUi(); return; }
   /* ---- omok ---- */
   if(m.t==='state'){ setMode('omok'); board=m.board.split('').map(Number); turn=m.turn; winner=m.winner;
-    winLine=m.winLine; seats=m.seats; myRole=m.role;
+    winLine=m.winLine; seats=m.seats; myRole=m.role; SOLO=!!m.solo; YOUIDX=m.youIdx||0;
     lastMove=(typeof m.last==='number'&&m.last>=0&&board[m.last])?m.last:-1; ui(); draw();
-    log('sys', myRole? `당신은 ${myRole===1?'흑':'백'}입니다 (라운드 ${m.round})` : '관전 모드'); return; }
+    log('sys', SOLO&&myRole? `혼자 두기 (라운드 ${m.round})` : myRole? `당신은 ${myRole===1?'흑':'백'}${YOUIDX===1?'팀':''}입니다 (라운드 ${m.round})` : '관전 모드'); return; }
   if(m.t==='move'){ board[m.i]=m.stone; turn=m.turn; winner=m.winner; winLine=m.winLine;
+    if(m.ups){ if(seats[1])seats[1].up=m.ups[1]; if(seats[2])seats[2].up=m.ups[2]; }
     lastMove=m.i; ui(); draw(); return; }
-  if(m.t==='roster'){ seats=m.seats; $('watch').textContent=m.watchers?`👀 관전 ${m.watchers}명`:''; ui(); aui(); return; }
+  if(m.t==='roster'){ seats=m.seats; if(typeof m.solo!=='undefined') SOLO=!!m.solo;
+    $('watch').textContent=m.watchers?`👀 관전 ${m.watchers}명`:''; ui(); aui(); return; }
   if(m.t==='chat'){ log('chat',m.text,m.name); return; }
   if(m.t==='sys'){ log('sys',m.text); return; }
 }
 
 /* ---- ui ---- */
+function boardEmpty(){ return board.every(v=>!v); }
+function myTurnNow(){                       // may I place a stone right now?
+  if(!(seats&&seats[1]&&seats[2])||winner) return false;
+  if(SOLO) return myRole!==0;
+  if(myRole!==turn) return false;
+  const s=seats[turn]; if(!s||!s.mate) return true;
+  const up=s.up||0;
+  const upOnline = up===1 ? s.mate.online : s.online;
+  if(!upOnline) return true;                // cover an offline teammate
+  return YOUIDX===up;
+}
 function ui(){
   if(MODE!=='omok') return;
-  for(const s of [1,2]){ const el=$('pl'+s), nm=el.querySelector('.nm'), st=el.querySelector('.st');
+  for(const s of [1,2]){ const el=$('pl'+s), nm=el.querySelector('.nm'), st=el.querySelector('.st'), pj=el.querySelector('.pj');
     const p=seats&&seats[s];
-    nm.textContent=p?p.name:'대기 중…';
+    nm.textContent=p?(p.name+(p.mate?' · '+p.mate.name:'')):'대기 중…';
     st.textContent=p?(p.online?'온라인':'오프라인'):'';
     el.classList.toggle('turn', !winner && turn===s && !!(seats[1]&&seats[2]));
-    el.classList.toggle('me', myRole===s); }
+    el.classList.toggle('me', myRole===s);
+    pj.classList.toggle('hidden', !(myRole===0 && p && !SOLO && (!p.mate||!p.mate.online))); }
+  $('btnSolo').classList.toggle('hidden', !(myRole && !SOLO && !(seats&&seats[1]&&seats[2]) && boardEmpty()));
   const t=$('turnmsg'); t.className='';
   $('btnRestart').classList.toggle('hidden', !(winner && (myRole===1||myRole===2)));
   $('btnRestart').disabled=false;
   if(winner===3){ t.textContent='무승부!'; t.className='win'; }
-  else if(winner){ t.textContent=(winner===myRole?'🏆 승리!':(myRole?'패배…':'게임 종료'))+' — '+(winner===1?'흑':'백')+' 승'; t.className='win'; }
-  else if(!(seats&&seats[1]&&seats[2])) t.textContent='상대를 기다리는 중… 초대링크를 보내세요';
-  else if(myRole===turn){ t.textContent='● 내 차례'; t.className='me'; }
+  else if(winner){ t.textContent=(SOLO?'게임 종료':(winner===myRole?'🏆 승리!':(myRole?'패배…':'게임 종료')))+' — '+(winner===1?'흑':'백')+' 승'; t.className='win'; }
+  else if(!(seats&&seats[1]&&seats[2])) t.textContent='상대를 기다리는 중… 초대 또는 혼자 두기';
+  else if(SOLO&&myRole){ t.textContent='● 내 차례 — '+(turn===1?'흑':'백')+' 돌'; t.className='me'; }
+  else if(myRole===turn){
+    if(myTurnNow()){ t.textContent='● 내 차례'; t.className='me'; }
+    else{ const st2=seats[turn], upN=(st2.up===1&&st2.mate)?st2.mate.name:st2.name;
+      t.textContent='우리 팀 차례 — '+upN+'님이 둘 차례'; } }
   else t.textContent=(turn===1?'흑':'백')+' 차례'+(myRole?'':' (관전)');
 }
 function log(kind,text,name){
@@ -312,6 +336,8 @@ function log(kind,text,name){
 $('btnSend').onclick=()=>{ const v=$('chat').value.trim(); if(!v)return; send({t:'chat',text:v}); $('chat').value=''; };
 $('chat').addEventListener('keydown',e=>{ if(e.key==='Enter') $('btnSend').click(); });
 $('btnRestart').onclick=()=>{ $('btnRestart').disabled=true; send({t:'restart'}); };
+$('btnSolo').onclick=()=>send({t:'solo'});
+document.querySelectorAll('.pj').forEach(b=>{ b.onclick=e=>{ e.stopPropagation(); send({t:'joinTeam',side:+b.dataset.side}); }; });
 
 /* ---- board ---- */
 const cv=$('board'), cx=cv.getContext('2d');
@@ -333,9 +359,9 @@ function draw(){
   cx.fillStyle='rgba(80,50,20,.75)';
   for(const sx of [3,7,11]) for(const sy of [3,7,11]){
     cx.beginPath(); cx.arc(PAD+sx*step,PAD+sy*step,3,0,7); cx.fill(); }
-  // hover ghost
-  if(hover>=0 && !winner && board[hover]===0 && myRole===turn && seats[1]&&seats[2]){
-    cx.globalAlpha=.4; stone(px(hover),py(hover),myRole); cx.globalAlpha=1; }
+  // hover ghost (the stone to be placed is always the current turn's color)
+  if(hover>=0 && board[hover]===0 && myTurnNow()){
+    cx.globalAlpha=.4; stone(px(hover),py(hover),turn); cx.globalAlpha=1; }
   // stones
   for(let i=0;i<CELLS;i++) if(board[i]) stone(px(i),py(i),board[i]);
   // last move marker
@@ -368,7 +394,7 @@ function cellAt(e){
 cv.addEventListener('mousemove',e=>{ if(MODE!=='omok')return; const i=cellAt(e); if(i!==hover){ hover=i; draw(); } });
 cv.addEventListener('mouseleave',()=>{ if(MODE!=='omok')return; hover=-1; draw(); });
 cv.addEventListener('click',e=>{ if(MODE!=='omok')return; const i=cellAt(e);
-  if(i<0||winner||board[i]!==0||myRole!==turn||!(seats[1]&&seats[2])) return;
+  if(i<0||board[i]!==0||!myTurnNow()) return;
   send({t:'move',i}); });
 
 /* ---- draw mode (그림그리기) ---- */
@@ -384,7 +410,8 @@ function setMode(mo){ MODE=mo;
   if(mo!=='beat') stopBeat();
   if(mo!=='draw') stopTimer();
   $('btnBegin').textContent = mo==='beat' ? '🎵 라운드 시작' : '🎨 라운드 시작';
-  $('tools').classList.add('hidden'); $('btnBegin').classList.add('hidden');
+  $('tools').classList.add('hidden'); $('btnBegin').classList.add('hidden'); $('btnSolo').classList.add('hidden');
+  document.querySelectorAll('.pj').forEach(b=>b.classList.add('hidden'));
   if(multi) $('btnRestart').classList.add('hidden'); }
 function drawUiSync(){ if(MODE!=='draw') return;
   const d=DRAW, ing=d.phase==='drawing';
@@ -456,13 +483,16 @@ function aui(){ if(MODE!=='alka')return;
     nm.textContent=p?p.name:'대기 중…';
     st.textContent=p?((p.online?'온라인':'오프라인')+' · '+n+'개'):'';
     el.classList.toggle('turn', !AL.winner && AL.turn===s && !!(seats[1]&&seats[2]) && AL.phase==='idle');
-    el.classList.toggle('me', myRole===s); }
+    el.classList.toggle('me', myRole===s);
+    el.querySelector('.pj').classList.add('hidden'); }              // no team mode in alka
+  $('btnSolo').classList.toggle('hidden', !(myRole && !SOLO && !(seats&&seats[1]&&seats[2])));
   const t=$('turnmsg'); t.className='';
   $('btnRestart').classList.toggle('hidden', !(AL.winner&&(myRole===1||myRole===2)));
   $('btnRestart').disabled=false;
-  if(AL.winner){ t.textContent=(AL.winner===myRole?'🏆 승리!':(myRole?'패배…':'게임 종료'))+' — '+(AL.winner===1?'흑':'백')+' 승'; t.className='win'; }
-  else if(!(seats&&seats[1]&&seats[2])) t.textContent='상대를 기다리는 중… 초대링크를 보내세요';
+  if(AL.winner){ t.textContent=(SOLO?'게임 종료':(AL.winner===myRole?'🏆 승리!':(myRole?'패배…':'게임 종료')))+' — '+(AL.winner===1?'흑':'백')+' 승'; t.className='win'; }
+  else if(!(seats&&seats[1]&&seats[2])) t.textContent='상대를 기다리는 중… 초대 또는 혼자 두기';
   else if(AL.phase==='sim') t.textContent='돌 굴러가는 중…';
+  else if(SOLO&&myRole){ t.textContent='● 내 차례 — '+(AL.turn===1?'흑':'백')+' 돌 발사!'; t.className='me'; }
   else if(myRole===AL.turn){ t.textContent='● 내 차례 — 내 돌을 당겨서 발사!'; t.className='me'; }
   else t.textContent=(AL.turn===1?'흑':'백')+' 차례'+(myRole?'':' (관전)');
 }
@@ -523,9 +553,11 @@ function arender(){ if(MODE!=='alka')return;
       cx.beginPath(); cx.moveTo(aim.x0,aim.y0); cx.lineTo(aim.x,aim.y); cx.stroke(); cx.setLineDash([]); } }
 }
 cv.addEventListener('pointerdown',e=>{ if(MODE!=='alka')return;
-  if(AL.winner||AL.phase!=='idle'||myRole!==AL.turn||!(seats[1]&&seats[2]))return;
+  if(AL.winner||AL.phase!=='idle'||!(seats[1]&&seats[2]))return;
+  if(!(SOLO? myRole : myRole===AL.turn))return;
+  const side=SOLO?AL.turn:myRole;             // in solo, flick whichever side's turn it is
   const [x,y]=evPt(e); let best=-1,bd=1e9;
-  AL.stones.forEach((s,i)=>{ if(!s.a||s.o!==myRole)return;
+  AL.stones.forEach((s,i)=>{ if(!s.a||s.o!==side)return;
     const d=Math.hypot(s.x-x,s.y-y); if(d<bd){bd=d;best=i;} });
   if(best<0||bd>AR*1.8)return;
   aim={i:best,x0:AL.stones[best].x,y0:AL.stones[best].y,x,y};

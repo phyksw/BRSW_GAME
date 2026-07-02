@@ -74,13 +74,20 @@ export class GameRoom {
     for (const ws of this.ctx.getWebSockets()) if (ws !== except) { try { ws.send(s); } catch {} }
   }
   seatsPub(g) {
-    const pub = s => s ? { name: s.name, online: !!s.online } : null;
-    return { 1: pub(g.seats[1]), 2: pub(g.seats[2]) };
+    const pub = (s, side) => s ? { name: s.name, online: !!s.online,
+      mate: g.tm && g.tm.mates[side] ? { name: g.tm.mates[side].name, online: !!g.tm.mates[side].online } : null,
+      up: this.upOf(g, side) } : null;
+    return { 1: pub(g.seats[1], 1), 2: pub(g.seats[2], 2) };
   }
+  isSolo(g) { return !!(g.seats[1] && g.seats[2] && g.seats[1].token === g.seats[2].token); }
+  sideMembers(g, side) { const mem = []; if (g.seats[side]) mem.push(g.seats[side]);
+    if (g.tm && g.tm.mates[side]) mem.push(g.tm.mates[side]); return mem; }
+  upOf(g, side) { const n = this.sideMembers(g, side).length;
+    return (g.tm && n > 1) ? g.tm.idx[side] % n : 0; }
   roster(g) {
     let watchers = 0;
     for (const ws of this.ctx.getWebSockets()) { const a = ws.deserializeAttachment(); if (a && !a.role) watchers++; }
-    return { t: 'roster', seats: this.seatsPub(g), watchers };
+    return { t: 'roster', seats: this.seatsPub(g), watchers, solo: this.isSolo(g) };
   }
   stateFor(g, role, token) {
     if (g.mode === 'draw') {
@@ -93,7 +100,7 @@ export class GameRoom {
     }
     if (g.mode === 'alka') {
       const a = g.a;
-      return { t: 'state', mode: 'alka', role, seats: this.seatsPub(g),
+      return { t: 'state', mode: 'alka', role, seats: this.seatsPub(g), solo: this.isSolo(g),
                turn: a.turn, winner: a.winner, round: a.round, phase: a.phase, stones: a.stones };
     }
     if (g.mode === 'beat') {
@@ -102,7 +109,8 @@ export class GameRoom {
                now: Date.now(), roundN: b.roundN, players: this.beatPub(b) };
     }
     return { t: 'state', mode: 'omok', board: g.board.join(''), turn: g.turn, winner: g.winner, winLine: g.winLine,
-             round: g.round, last: g.last, role, seats: this.seatsPub(g) };
+             round: g.round, last: g.last, role, seats: this.seatsPub(g), solo: this.isSolo(g),
+             youIdx: (g.tm && role && g.tm.mates[role] && g.tm.mates[role].token === token) ? 1 : 0 };
   }
   /* ---- draw-mode helpers ---- */
   drawPlayersPub(d) {
@@ -237,8 +245,14 @@ export class GameRoom {
       for (const s of [1, 2]) if (g.seats[s] && g.seats[s].online && !live.has(g.seats[s].token)) {
         g.seats[s].online = false; dirty = true;
       }
-      let role = 0;
+      if (g.tm) for (const s of [1, 2]) { const mt = g.tm.mates[s];
+        if (mt && mt.online && !live.has(mt.token)) { mt.online = false; dirty = true; } }
+      let role = 0, isMate = false;
       for (const s of [1, 2]) if (g.seats[s] && g.seats[s].token === token) role = s;   // reclaim my seat
+      if (!role && g.tm) for (const s of [1, 2]) if (!role && g.tm.mates[s] && g.tm.mates[s].token === token) {
+        role = s; isMate = true;                                                        // reclaim my TEAM slot
+        if (!g.tm.mates[s].online || g.tm.mates[s].name !== name) { g.tm.mates[s].online = true; g.tm.mates[s].name = name; dirty = true; }
+      }
       const midGame = g.mode === 'alka' ? (g.a.moves > 0 && !g.a.winner) : (g.moves > 0 && !g.winner);
       if (!role) for (const s of [1, 2]) if (!role && !g.seats[s]) {                    // empty seats first
         g.seats[s] = { token, name, online: true }; role = s; dirty = true;
@@ -246,15 +260,15 @@ export class GameRoom {
       if (!role && !midGame) for (const s of [1, 2]) if (!role && !g.seats[s].online) { // offline seats only when no live game
         g.seats[s] = { token, name, online: true }; role = s; dirty = true;
       }
-      const wasHere = role ? (g.seats[role].online === true && g.seats[role].name === name) : live.has(token);
-      if (role && (!g.seats[role].online || g.seats[role].name !== name)) {
+      const wasHere = (role && !isMate) ? (g.seats[role].online === true && g.seats[role].name === name) : live.has(token);
+      if (role && !isMate && (!g.seats[role].online || g.seats[role].name !== name)) {
         g.seats[role].online = true; g.seats[role].name = name; dirty = true;
       }
-      ws.serializeAttachment({ token, name, role });
+      ws.serializeAttachment({ token, name, role, mate: isMate });
       if (dirty) await this.save();
-      ws.send(JSON.stringify(this.stateFor(g, role)));
+      ws.send(JSON.stringify(this.stateFor(g, role, token)));
       if (dirty || !wasHere) this.bcast(this.roster(g));
-      if (!wasHere) this.bcast({ t: 'sys', text: `${name} 입장 ${role ? (role === 1 ? '(흑)' : '(백)') : '(관전)'}` }, ws);
+      if (!wasHere) this.bcast({ t: 'sys', text: `${name} 입장 ${role ? (isMate ? (role === 1 ? '(흑팀)' : '(백팀)') : (role === 1 ? '(흑)' : '(백)')) : '(관전)'}` }, ws);
       return;
     }
 
@@ -340,13 +354,46 @@ export class GameRoom {
       return;
     }
 
+    if (m.t === 'solo') {                        // omok/alka: take BOTH seats and play alone
+      if (g.mode !== 'omok' && g.mode !== 'alka') return;
+      if (att.role !== 1 && att.role !== 2 || att.mate) return;
+      if (g.tm) return;                          // not in team mode
+      const other = att.role === 1 ? 2 : 1;
+      const started = g.mode === 'alka' ? g.a.moves > 0 : g.moves > 0;
+      if (started) return;                       // only from a fresh board
+      if (g.seats[other] && g.seats[other].online && g.seats[other].token !== att.token) return;
+      g.seats[other] = { token: att.token, name: att.name + '·2P', online: true };
+      await this.save();
+      this.bcast(this.roster(g));
+      this.bcast({ t: 'sys', text: `${att.name}님이 혼자 두기를 시작했어요 (양쪽 조작)` });
+      return;
+    }
+    if (m.t === 'joinTeam') {                    // omok: become a side's teammate (pair play, alternate moves)
+      if (g.mode !== 'omok' || !att.token || !att.name) return;
+      const side = m.side === 2 ? 2 : 1;
+      if (this.isSolo(g) || !g.seats[side]) return;
+      if ((g.seats[1] && g.seats[1].token === att.token) || (g.seats[2] && g.seats[2].token === att.token)) return;
+      g.tm = g.tm || { mates: { 1: null, 2: null }, idx: { 1: 0, 2: 0 } };
+      const cur = g.tm.mates[side], oth = g.tm.mates[side === 1 ? 2 : 1];
+      if (cur && cur.online && cur.token !== att.token) return;    // slot taken
+      if (oth && oth.token === att.token) return;                  // already on the other team
+      g.tm.mates[side] = { token: att.token, name: att.name, online: true };
+      ws.serializeAttachment({ ...att, role: side, mate: true });
+      await this.save();
+      ws.send(JSON.stringify(this.stateFor(g, side, att.token)));
+      this.bcast(this.roster(g));
+      this.bcast({ t: 'sys', text: `${att.name}님이 ${side === 1 ? '흑' : '백'}팀에 합류 — 팀원이 번갈아 둡니다` });
+      return;
+    }
+
     if (m.t === 'flick') {                        // alka: turn player launches ONE of their stones
       if (g.mode !== 'alka') return;
       const a = g.a;
-      if (a.winner || a.phase !== 'idle' || att.role !== a.turn) return;
+      if (a.winner || a.phase !== 'idle') return;
       if (!g.seats[1] || !g.seats[2]) return;
+      if (!g.seats[a.turn] || g.seats[a.turn].token !== att.token) return;   // token-based: supports solo
       const i = m.i | 0, s = a.stones[i];
-      if (!s || !s.a || s.o !== att.role) return;
+      if (!s || !s.a || s.o !== a.turn) return;
       const vx = Math.max(-1300, Math.min(1300, +m.vx || 0));
       const vy = Math.max(-1300, Math.min(1300, +m.vy || 0));
       if (Math.hypot(vx, vy) < 20) return;
@@ -359,7 +406,8 @@ export class GameRoom {
     if (m.t === 'settle') {                       // alka: flicker reports authoritative rest positions
       if (g.mode !== 'alka') return;
       const a = g.a;
-      if (a.phase !== 'sim' || att.role !== a.turn) return;
+      if (a.phase !== 'sim') return;
+      if (!g.seats[a.turn] || g.seats[a.turn].token !== att.token) return;   // token-based: supports solo
       const arr = m.stones;
       if (!Array.isArray(arr) || arr.length !== a.stones.length) return;
       for (let k = 0; k < arr.length; k++) {
@@ -375,7 +423,7 @@ export class GameRoom {
       const c2 = a.stones.filter(s => s.a && s.o === 2).length;
       if (c2 === 0 && c1 > 0) a.winner = 1;
       else if (c1 === 0 && c2 > 0) a.winner = 2;
-      else if (c1 === 0 && c2 === 0) a.winner = att.role === 1 ? 2 : 1;   // killed your own last stone too
+      else if (c1 === 0 && c2 === 0) a.winner = a.turn === 1 ? 2 : 1;    // killed your own last stone too
       else a.turn = a.turn === 1 ? 2 : 1;
       a.phase = 'idle';
       await this.save();
@@ -386,16 +434,25 @@ export class GameRoom {
     if (m.t === 'move') {
       if (g.mode !== 'omok') return;
       const i = m.i | 0;
-      if (g.winner || att.role !== g.turn) return;
+      if (g.winner) return;
       if (i < 0 || i >= CELLS || g.board[i] !== 0) return;
       if (!g.seats[1] || !g.seats[2]) return;    // wait for both players
-      g.board[i] = att.role; g.moves++; g.last = i;
+      const side = g.turn, mem = this.sideMembers(g, side);
+      const mi = mem.findIndex(p => p.token === att.token);
+      if (mi < 0) return;                        // not this side's player (solo: one token holds both seats)
+      if (mem.length > 1) {                      // team: members alternate within the side
+        const up = g.tm.idx[side] % mem.length;
+        if (mi !== up && mem[up].online !== false) return;   // (an offline teammate may be covered)
+      }
+      g.board[i] = side; g.moves++; g.last = i;
       const win = winLine(g.board, i);
-      if (win) { g.winner = att.role; g.winLine = win; }
+      if (win) { g.winner = side; g.winLine = win; }
       else if (g.moves === CELLS) g.winner = 3;  // draw
-      else g.turn = att.role === 1 ? 2 : 1;
+      else g.turn = side === 1 ? 2 : 1;
+      if (g.tm) g.tm.idx[side]++;
       await this.save();
-      this.bcast({ t: 'move', i, stone: att.role, turn: g.turn, winner: g.winner, winLine: g.winLine });
+      this.bcast({ t: 'move', i, stone: side, turn: g.turn, winner: g.winner, winLine: g.winLine,
+                   ups: { 1: this.upOf(g, 1), 2: this.upOf(g, 2) } });
       return;
     }
 
@@ -420,15 +477,20 @@ export class GameRoom {
       if (att.role !== 1 && att.role !== 2) return;
       if (!g.winner) return;                     // also makes a racing duplicate restart a no-op
       const s1 = g.seats[1], s2 = g.seats[2];
-      this.game = emptyGame();
-      this.game.seats[1] = s2; this.game.seats[2] = s1;   // swap colors each round
-      this.game.round = (g.round || 1) + 1;
+      const ng = emptyGame('omok');              // keep the room an omok room (was a mode:null bug)
+      ng.seats[1] = s2; ng.seats[2] = s1;        // swap colors each round
+      ng.round = (g.round || 1) + 1;
+      ng.tm = g.tm ? { mates: { 1: g.tm.mates[2], 2: g.tm.mates[1] }, idx: { 1: 0, 2: 0 } } : null;  // teams swap too
+      this.game = ng;
       await this.save();
       for (const w of this.ctx.getWebSockets()) {         // roles may have swapped -> fresh state for everyone
-        const a = w.deserializeAttachment() || {}; let role = 0;
-        for (const s of [1, 2]) if (this.game.seats[s] && this.game.seats[s].token === a.token) role = s;
-        w.serializeAttachment({ ...a, role });
-        try { w.send(JSON.stringify(this.stateFor(this.game, role))); } catch {}
+        const a = w.deserializeAttachment() || {}; let role = 0, mate = false;
+        for (const s of [1, 2]) {
+          if (ng.seats[s] && ng.seats[s].token === a.token) { role = s; mate = false; }
+          else if (!role && ng.tm && ng.tm.mates[s] && ng.tm.mates[s].token === a.token) { role = s; mate = true; }
+        }
+        w.serializeAttachment({ ...a, role, mate });
+        try { w.send(JSON.stringify(this.stateFor(ng, role, a.token))); } catch {}
       }
       this.bcast({ t: 'sys', text: `${att.name}님이 새 판을 시작했어요 (흑백 교대)` });
       return;
@@ -459,8 +521,10 @@ export class GameRoom {
       }
       return;
     }
-    if (!still && att.role && g.seats[att.role] && g.seats[att.role].token === att.token) {
+    if (!still && att.role && !att.mate && g.seats[att.role] && g.seats[att.role].token === att.token) {
       g.seats[att.role].online = false; await this.save();
+    } else if (!still && att.mate && g.tm && g.tm.mates[att.role] && g.tm.mates[att.role].token === att.token) {
+      g.tm.mates[att.role].online = false; await this.save();
     }
     // alka: if the flicker vanished mid-simulation, unstick the room (positions stay at last settle)
     if (g.mode === 'alka' && g.a && g.a.phase === 'sim' && !still && att.role === g.a.turn) {
