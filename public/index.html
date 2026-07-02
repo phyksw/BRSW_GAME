@@ -97,7 +97,7 @@ button.gitem{font-family:var(--sans);color:var(--text);text-align:left;cursor:po
 </head>
 <body>
 <div class="wrap">
-  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms</span></header>
+  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.8</span></header>
 
   <!-- lobby -->
   <div id="lobby" class="card">
@@ -238,7 +238,7 @@ function handle(m){
   if(m.t==='phase'){ DRAW.phase=m.phase; if(m.players)renderScores(m.players); drawUiSync(); return; }
   if(m.t==='players'){ if(MODE==='beat'&&BEAT){ BEAT.players=m.players||[]; renderBeatBoard(); } else renderScores(m.players); return; }
   /* ---- alka ---- */
-  if(m.t==='state'&&m.mode==='alka'){ setMode('alka'); stopAsim();
+  if(m.t==='state'&&m.mode==='alka'){ setMode('alka'); stopAsim(); selStone=-1; aim=null;
     seats=m.seats; myRole=m.role; SOLO=!!m.solo;
     AL={stones:m.stones.map(s=>({x:s.x,y:s.y,o:s.o,a:s.a,vx:0,vy:0})), turn:m.turn, winner:m.winner,
         phase:m.phase||'idle', auth:JSON.stringify(m.stones), mine:false};
@@ -246,12 +246,12 @@ function handle(m){
     log('sys', myRole? `당신은 ${myRole===1?'흑(아래)':'백(위)'} — 라운드 ${m.round}. 내 돌을 당겨서 튕기세요!` : '관전 모드'); return; }
   if(m.t==='flick'){ if(MODE!=='alka')return; const s=AL.stones[m.i]; if(!s||!s.a)return;
     s.vx=m.vx; s.vy=m.vy; AL.phase='sim'; AL.mine=false; startAsim(); aui(); return; }
-  if(m.t==='settle'){ if(MODE!=='alka')return; stopAsim();
+  if(m.t==='settle'){ if(MODE!=='alka')return; stopAsim(); selStone=-1; aim=null;
     m.stones.forEach((s,k)=>{ const t=AL.stones[k]; t.x=s.x; t.y=s.y; t.a=s.a; t.vx=0; t.vy=0; });
     AL.turn=m.turn; AL.winner=m.winner; AL.phase='idle'; AL.mine=false; AL.auth=JSON.stringify(m.stones);
     aui(); arender();
     if(m.winner) log('sys',(m.winner===1?'흑':'백')+' 승리! 🏆'); return; }
-  if(m.t==='abort'){ if(MODE!=='alka')return; stopAsim();
+  if(m.t==='abort'){ if(MODE!=='alka')return; stopAsim(); selStone=-1; aim=null;
     JSON.parse(AL.auth).forEach((s,k)=>{ const t=AL.stones[k]; if(t){ t.x=s.x; t.y=s.y; t.a=s.a; t.vx=0; t.vy=0; } });
     AL.phase='idle'; AL.mine=false; aui(); arender(); return; }
   /* ---- beat ---- */
@@ -391,6 +391,9 @@ function cellAt(e){
   if(Math.abs(mx-(PAD+gx*step))>step*.45||Math.abs(my-(PAD+gy*step))>step*.45) return -1;
   return gy*SIZE+gx;
 }
+/* bulletproof mobile: block scroll/zoom takeover on the game canvas (drawing + slingshot) */
+cv.addEventListener('touchstart',e=>{ if(MODE!=='omok') e.preventDefault(); },{passive:false});
+cv.addEventListener('touchmove', e=>{ if(MODE!=='omok') e.preventDefault(); },{passive:false});
 cv.addEventListener('mousemove',e=>{ if(MODE!=='omok')return; const i=cellAt(e); if(i!==hover){ hover=i; draw(); } });
 cv.addEventListener('mouseleave',()=>{ if(MODE!=='omok')return; hover=-1; draw(); });
 cv.addEventListener('click',e=>{ if(MODE!=='omok')return; const i=cellAt(e);
@@ -476,7 +479,8 @@ $('btnBegin').onclick=()=>send({t:'begin'});
 
 /* ---- alka mode (알까기): turn player's client simulates, broadcasts result ---- */
 const AR=16, AB0=30, AB1=570;         // stone radius, board bounds (600x600 canvas)
-let asimId=null, alast=0, aim=null;   // aim: {i,x0,y0,x,y} while dragging
+let asimId=null, alast=0, aim=null,   // aim: {i,sx,sy,x,y} while dragging (pull vector = start - current)
+    selStone=-1;                      // sticky selection: tap a stone, then drag ANYWHERE to aim (mobile-friendly)
 function aui(){ if(MODE!=='alka')return;
   for(const s of [1,2]){ const el=$('pl'+s), nm=el.querySelector('.nm'), st=el.querySelector('.st');
     const p=seats&&seats[s], n=AL.stones.filter(t=>t.a&&t.o===s).length;
@@ -492,8 +496,8 @@ function aui(){ if(MODE!=='alka')return;
   if(AL.winner){ t.textContent=(SOLO?'게임 종료':(AL.winner===myRole?'🏆 승리!':(myRole?'패배…':'게임 종료')))+' — '+(AL.winner===1?'흑':'백')+' 승'; t.className='win'; }
   else if(!(seats&&seats[1]&&seats[2])) t.textContent='상대를 기다리는 중… 초대 또는 혼자 두기';
   else if(AL.phase==='sim') t.textContent='돌 굴러가는 중…';
-  else if(SOLO&&myRole){ t.textContent='● 내 차례 — '+(AL.turn===1?'흑':'백')+' 돌 발사!'; t.className='me'; }
-  else if(myRole===AL.turn){ t.textContent='● 내 차례 — 내 돌을 당겨서 발사!'; t.className='me'; }
+  else if(SOLO&&myRole){ t.textContent='● 내 차례 — '+(AL.turn===1?'흑':'백')+' 돌을 탭 → 당겨서 발사!'; t.className='me'; }
+  else if(myRole===AL.turn){ t.textContent='● 내 차례 — 돌을 탭 → 당겨서 발사!'; t.className='me'; }
   else t.textContent=(AL.turn===1?'흑':'백')+' 차례'+(myRole?'':' (관전)');
 }
 function alkaPhys(st,dt){              // fixed-substep integration + equal-mass elastic collisions
@@ -545,22 +549,26 @@ function arender(){ if(MODE!=='alka')return;
     else{ gr.addColorStop(0,'#ffffff'); gr.addColorStop(1,'#c3c7d4'); }
     cx.fillStyle=gr; cx.beginPath(); cx.arc(s.x,s.y,r,0,7); cx.fill();
     cx.strokeStyle='rgba(0,0,0,.35)'; cx.lineWidth=.8; cx.stroke(); }
-  if(aim){ const dx=aim.x0-aim.x, dy=aim.y0-aim.y, p=Math.hypot(dx,dy);   // slingshot aim
-    // ring the grabbed stone so it stays identifiable under a finger
+  // sticky selection ring: the grabbed stone stays marked even between drag attempts
+  if(selStone>=0&&AL.stones[selStone]&&AL.stones[selStone].a){
+    const ss=AL.stones[selStone];
     cx.strokeStyle='rgba(53,220,255,.95)'; cx.lineWidth=3;
-    cx.beginPath(); cx.arc(aim.x0,aim.y0,AR+5,0,7); cx.stroke();
+    cx.beginPath(); cx.arc(ss.x,ss.y,AR+6,0,7); cx.stroke(); }
+  if(aim&&AL.stones[aim.i]){ const an0=AL.stones[aim.i];                   // slingshot aim
+    const dx=aim.sx-aim.x, dy=aim.sy-aim.y, p=Math.hypot(dx,dy);           // pull vector = drag start - current
     if(p>6){ const cap=Math.min(1,p/320);
       cx.strokeStyle=`rgba(255,${Math.round(200-120*cap)},80,.95)`; cx.lineWidth=6; cx.lineCap='round';
-      cx.beginPath(); cx.moveTo(aim.x0,aim.y0); cx.lineTo(aim.x0+dx*1.1,aim.y0+dy*1.1); cx.stroke();
-      const hx=aim.x0+dx*1.1, hy=aim.y0+dy*1.1, an=Math.atan2(dy,dx);     // arrowhead
+      const hx=an0.x+dx/p*Math.min(200,p*1.1), hy=an0.y+dy/p*Math.min(200,p*1.1);
+      cx.beginPath(); cx.moveTo(an0.x,an0.y); cx.lineTo(hx,hy); cx.stroke();
+      const an=Math.atan2(dy,dx);                                          // arrowhead
       cx.beginPath(); cx.moveTo(hx,hy);
       cx.lineTo(hx-14*Math.cos(an-0.42),hy-14*Math.sin(an-0.42));
       cx.moveTo(hx,hy);
       cx.lineTo(hx-14*Math.cos(an+0.42),hy-14*Math.sin(an+0.42)); cx.stroke();
       cx.setLineDash([5,6]); cx.strokeStyle='rgba(255,255,255,.5)'; cx.lineWidth=2;
-      cx.beginPath(); cx.moveTo(aim.x0,aim.y0); cx.lineTo(aim.x,aim.y); cx.stroke(); cx.setLineDash([]);
-      // power gauge near the stone (finger-safe: offset upward)
-      const gw=90, gx0=Math.min(CSS-gw-14,Math.max(14,aim.x0-gw/2)), gy0=Math.max(14,aim.y0-AR-34);
+      cx.beginPath(); cx.moveTo(aim.sx,aim.sy); cx.lineTo(aim.x,aim.y); cx.stroke(); cx.setLineDash([]);
+      // power gauge above the stone (finger-safe)
+      const gw=90, gx0=Math.min(CSS-gw-14,Math.max(14,an0.x-gw/2)), gy0=Math.max(14,an0.y-AR-34);
       cx.fillStyle='rgba(8,14,26,.55)'; cx.fillRect(gx0,gy0,gw,10);
       cx.fillStyle=`rgb(255,${Math.round(200-140*cap)},70)`; cx.fillRect(gx0+1,gy0+1,(gw-2)*cap,8); } }
 }
@@ -571,22 +579,25 @@ cv.addEventListener('pointerdown',e=>{ if(MODE!=='alka')return;
   const [x,y]=evPt(e); let best=-1,bd=1e9;
   AL.stones.forEach((s,i)=>{ if(!s.a||s.o!==side)return;
     const d=Math.hypot(s.x-x,s.y-y); if(d<bd){bd=d;best=i;} });
-  const grabR = e.pointerType==='touch' ? AR*3.4 : AR*1.8;   // fingers need a bigger target
-  if(best<0||bd>grabR)return;
-  aim={i:best,x0:AL.stones[best].x,y0:AL.stones[best].y,x,y};
+  const grabR = e.pointerType==='touch' ? AR*3.6 : AR*1.8;   // fingers need a bigger target
+  if(best>=0&&bd<=grabR) selStone=best;       // tapped on/near a stone -> (re)select it
+  if(selStone<0||!AL.stones[selStone]||!AL.stones[selStone].a){ selStone=-1; return; }
+  aim={i:selStone, sx:x, sy:y, x, y};         // once selected, the pull can start ANYWHERE
   try{cv.setPointerCapture(e.pointerId);}catch(err){} e.preventDefault(); arender(); });
 cv.addEventListener('pointermove',e=>{ if(MODE!=='alka'||!aim)return;
   const [x,y]=evPt(e); aim.x=x; aim.y=y; arender(); });
 function flickStone(i,vx,vy){                    // my shot: local sim is authoritative -> settle
   const s=AL.stones[i]; if(!s||!s.a)return;
-  s.vx=vx; s.vy=vy; AL.phase='sim'; AL.mine=true;
+  s.vx=vx; s.vy=vy; AL.phase='sim'; AL.mine=true; selStone=-1; aim=null;
   send({t:'flick',i,vx:Math.round(vx),vy:Math.round(vy)});
   startAsim(); aui(); }
-['pointerup','pointercancel'].forEach(ev=>cv.addEventListener(ev,()=>{ if(MODE!=='alka'||!aim)return;
-  const dx=aim.x0-aim.x, dy=aim.y0-aim.y, p=Math.hypot(dx,dy), i=aim.i; aim=null;
-  if(p<12){ arender(); return; }
+cv.addEventListener('pointerup',()=>{ if(MODE!=='alka'||!aim)return;
+  const dx=aim.sx-aim.x, dy=aim.sy-aim.y, p=Math.hypot(dx,dy), i=aim.i; aim=null;
+  if(p<14){ arender(); return; }              // just a tap -> selection stays, no shot
   const v=Math.min(1200,p*3.2);
-  flickStone(i, dx/p*v, dy/p*v); }));
+  flickStone(i, dx/p*v, dy/p*v); });
+cv.addEventListener('pointercancel',()=>{ if(MODE!=='alka')return;
+  aim=null; arender(); });                    // browser stole the gesture: KEEP the selection, just retry the pull
 
 /* ---- beat mode (리듬): local judgment, scores relayed ---- */
 function initBeat(){ if(BEAT&&BEAT.loop) clearInterval(BEAT.loop);
