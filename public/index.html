@@ -119,7 +119,7 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
 </head>
 <body>
 <div class="wrap">
-  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.17</span></header>
+  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.18</span></header>
 
   <!-- lobby -->
   <div id="lobby" class="card">
@@ -211,7 +211,7 @@ $('btnJoin').onclick=()=>{ if(!myName())return; const c=$('code').value.trim().t
 $('code').addEventListener('keydown',e=>{ if(e.key==='Enter') $('btnJoin').click(); });
 
 function enter(code){ room=code; location.hash=code; inGame=true;
-  board=new Array(CELLS).fill(0); turn=1; winner=0; winLine=null; lastMove=-1; hover=-1;   // reset per-room state
+  board=new Array(CELLS).fill(0); turn=1; winner=0; winLine=null; lastMove=-1; hover=-1; pendingCell=-1;   // reset per-room state
   seats={1:null,2:null}; myRole=0; retry=0; SOLO=false; YOUIDX=0; clearReconn(); $('log').innerHTML='';
   DRAW={phase:'lobby',roundEnd:0,youDrawer:false,word:null,mask:''};
   AL={stones:[],turn:1,winner:0,phase:'idle',auth:'[]',mine:false}; stopAsim();
@@ -345,7 +345,7 @@ function handle(m){
     log('sys', SOLO&&myRole? `혼자 두기 (라운드 ${m.round})` : myRole? `당신은 ${myRole===1?'흑':'백'}${YOUIDX===1?'팀':''}입니다 (라운드 ${m.round})` : '관전 모드'); return; }
   if(m.t==='move'){ board[m.i]=m.stone; turn=m.turn; winner=m.winner; winLine=m.winLine;
     if(m.ups){ if(seats[1])seats[1].up=m.ups[1]; if(seats[2])seats[2].up=m.ups[2]; }
-    lastMove=m.i; ui(); draw(); return; }
+    lastMove=m.i; pendingCell=-1; ui(); draw(); return; }
   if(m.t==='roster'){ seats=m.seats; if(typeof m.solo!=='undefined') SOLO=!!m.solo;
     $('watch').textContent=m.watchers?`👀 관전 ${m.watchers}명`:''; ui(); aui(); return; }
   if(m.t==='chat'){ log('chat',m.text,m.name); return; }
@@ -403,11 +403,11 @@ document.querySelectorAll('.pj').forEach(b=>{ b.onclick=e=>{ e.stopPropagation()
 
 /* ---- board ---- */
 const cv=$('board'), cx=cv.getContext('2d');
-const DPR=Math.min(2,window.devicePixelRatio||1), CSS=600, PAD=34;
-cv.width=CSS*DPR; cv.height=CSS*DPR; cv.style.width='min(600px,92vw)';
-const step=(CSS-PAD*2)/(SIZE-1);
+const DPR=Math.min(2,window.devicePixelRatio||1), CSS=600, PAD=26;
+cv.width=CSS*DPR; cv.height=CSS*DPR; cv.style.width='min(640px,94vw)';
+const step=(CSS-PAD*2)/(SIZE-1), SR=step*0.5;    // stones sized like real Go stones (touching)
 const px=i=>PAD+(i%SIZE)*step, py=i=>PAD+((i/SIZE)|0)*step;
-let hover=-1;
+let hover=-1, pendingCell=-1, lastPT='mouse';   // touch places in two taps (preview -> confirm)
 
 function draw(){
   if(MODE!=='omok') return;
@@ -421,14 +421,17 @@ function draw(){
   cx.fillStyle='rgba(80,50,20,.75)';
   for(const sx of [3,7,11]) for(const sy of [3,7,11]){
     cx.beginPath(); cx.arc(PAD+sx*step,PAD+sy*step,3,0,7); cx.fill(); }
-  // hover ghost (the stone to be placed is always the current turn's color)
-  if(hover>=0 && board[hover]===0 && myTurnNow())
-    faceStone(px(hover),py(hover),step*.42,turn,EXP.neutral,.45);
+  // placement guide: translucent stone at hover (mouse) or pending tap (touch)
+  const gcell = pendingCell>=0 ? pendingCell : hover;
+  if(gcell>=0 && board[gcell]===0 && myTurnNow()){
+    faceStone(px(gcell),py(gcell),SR,turn,EXP.neutral,.55);
+    if(pendingCell>=0){ cx.strokeStyle='rgba(255,111,97,.9)'; cx.lineWidth=2.5; cx.setLineDash([5,4]);
+      cx.beginPath(); cx.arc(px(gcell),py(gcell),SR+4,0,7); cx.stroke(); cx.setLineDash([]); } }
   // stones
-  for(let i=0;i<CELLS;i++) if(board[i]) faceStone(px(i),py(i),step*.42,board[i],omokExp(i));
+  for(let i=0;i<CELLS;i++) if(board[i]) faceStone(px(i),py(i),SR,board[i],omokExp(i));
   // last move marker
   if(lastMove>=0 && board[lastMove]){ cx.strokeStyle='#ff6f61'; cx.lineWidth=2;
-    cx.beginPath(); cx.arc(px(lastMove),py(lastMove),step*.46,0,7); cx.stroke(); }
+    cx.beginPath(); cx.arc(px(lastMove),py(lastMove),SR+3,0,7); cx.stroke(); }
   // win line: connect the two farthest-apart cells of the winning row
   if(winLine&&winLine.length>1){
     let a=winLine[0], b=winLine[1], best=-1;
@@ -489,8 +492,11 @@ cv.addEventListener('touchstart',e=>{ if(MODE!=='omok') e.preventDefault(); },{p
 cv.addEventListener('touchmove', e=>{ if(MODE!=='omok') e.preventDefault(); },{passive:false});
 cv.addEventListener('mousemove',e=>{ if(MODE!=='omok')return; const i=cellAt(e); if(i!==hover){ hover=i; draw(); } });
 cv.addEventListener('mouseleave',()=>{ if(MODE!=='omok')return; hover=-1; draw(); });
+cv.addEventListener('pointerdown',e=>{ if(MODE==='omok') lastPT=e.pointerType||'mouse'; });
 cv.addEventListener('click',e=>{ if(MODE!=='omok')return; const i=cellAt(e);
-  if(i<0||board[i]!==0||!myTurnNow()) return;
+  if(i<0||board[i]!==0||!myTurnNow()){ if(pendingCell>=0){ pendingCell=-1; draw(); } return; }
+  if(lastPT==='touch'&&pendingCell!==i){ pendingCell=i; draw(); return; }   // 1st tap: 투명돌 미리보기
+  pendingCell=-1;
   send({t:'move',i}); });
 
 /* ---- draw mode (그림그리기) ---- */
