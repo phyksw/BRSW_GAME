@@ -102,7 +102,7 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
 </head>
 <body>
 <div class="wrap">
-  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.9</span></header>
+  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.10</span></header>
 
   <!-- lobby -->
   <div id="lobby" class="card">
@@ -252,6 +252,7 @@ function handle(m){
   if(m.t==='flick'){ if(MODE!=='alka')return; const s=AL.stones[m.i]; if(!s||!s.a)return;
     s.vx=m.vx; s.vy=m.vy; AL.phase='sim'; AL.mine=false; startAsim(); aui(); return; }
   if(m.t==='settle'){ if(MODE!=='alka')return; stopAsim(); selStone=-1; aim=null;
+    m.stones.forEach((s,k)=>{ const t=AL.stones[k]; if(t.a&&!s.a) addFader(t); });   // authoritative knock-outs cry too
     m.stones.forEach((s,k)=>{ const t=AL.stones[k]; t.x=s.x; t.y=s.y; t.a=s.a; t.vx=0; t.vy=0; });
     AL.turn=m.turn; AL.winner=m.winner; AL.phase='idle'; AL.mine=false; AL.auth=JSON.stringify(m.stones);
     aui(); arender();
@@ -365,10 +366,10 @@ function draw(){
   for(const sx of [3,7,11]) for(const sy of [3,7,11]){
     cx.beginPath(); cx.arc(PAD+sx*step,PAD+sy*step,3,0,7); cx.fill(); }
   // hover ghost (the stone to be placed is always the current turn's color)
-  if(hover>=0 && board[hover]===0 && myTurnNow()){
-    cx.globalAlpha=.4; stone(px(hover),py(hover),turn); cx.globalAlpha=1; }
+  if(hover>=0 && board[hover]===0 && myTurnNow())
+    faceStone(px(hover),py(hover),step*.42,turn,EXP.neutral,.45);
   // stones
-  for(let i=0;i<CELLS;i++) if(board[i]) stone(px(i),py(i),board[i]);
+  for(let i=0;i<CELLS;i++) if(board[i]) faceStone(px(i),py(i),step*.42,board[i],omokExp(i));
   // last move marker
   if(lastMove>=0 && board[lastMove]){ cx.strokeStyle='#ff6f61'; cx.lineWidth=2;
     cx.beginPath(); cx.arc(px(lastMove),py(lastMove),step*.46,0,7); cx.stroke(); }
@@ -387,6 +388,35 @@ function stone(x,y,v){
   else{ gr.addColorStop(0,'#ffffff'); gr.addColorStop(1,'#c3c7d4'); }
   cx.fillStyle=gr; cx.beginPath(); cx.arc(x,y,r,0,7); cx.fill();
   cx.strokeStyle='rgba(0,0,0,.35)'; cx.lineWidth=.8; cx.stroke();
+}
+/* ---- tiger character stones (6x4 sprite: rows 0-1 white, 2-3 black; no alpha -> circular clip) ---- */
+const STONE_IMG=new Image(); STONE_IMG.src='img/stones.png';
+STONE_IMG.onload=()=>{ if(MODE==='omok')draw(); else if(MODE==='alka')arender(); };
+const EXP={neutral:0,grin:1,laugh:2,wink:3,wow:4,calm:5,cry:6,steam:7,grit:8,sleep:9,love:10,shine:11};
+function faceStone(x,y,r,side,exp,alpha){        // side 1=black tiger, 2=white tiger
+  cx.save();
+  if(alpha!=null) cx.globalAlpha*=alpha;
+  cx.beginPath(); cx.arc(x,y+r*0.18,r*0.92,0,7);  // soft ground shadow
+  cx.fillStyle='rgba(50,35,15,.22)'; cx.fill();
+  if(STONE_IMG.complete&&STONE_IMG.naturalWidth){
+    const cw=STONE_IMG.naturalWidth/6, ch2=STONE_IMG.naturalHeight/4;
+    const row=(side===2?0:2)+((exp/6)|0), col=exp%6;
+    const k=(2*r)/(0.84*Math.min(cw,ch2));        // sprite circle ≈ 84% of cell -> map onto 2r
+    cx.beginPath(); cx.arc(x,y,r*1.03,0,7); cx.clip();
+    cx.drawImage(STONE_IMG, col*cw, row*ch2, cw, ch2, x-cw*k/2, y-ch2*k/2, cw*k, ch2*k);
+  } else {                                        // sprite not loaded yet -> plain stone
+    const gr=cx.createRadialGradient(x-r*.35,y-r*.4,r*.1,x,y,r);
+    if(side===1){ gr.addColorStop(0,'#6a6a78'); gr.addColorStop(1,'#0a0a12'); }
+    else{ gr.addColorStop(0,'#ffffff'); gr.addColorStop(1,'#c3c7d4'); }
+    cx.fillStyle=gr; cx.beginPath(); cx.arc(x,y,r,0,7); cx.fill();
+  }
+  cx.restore();
+}
+function omokExp(i){
+  if(winLine&&winLine.indexOf(i)>=0) return EXP.love;   // the winning five celebrate
+  if(i===lastMove) return EXP.shine;                    // freshly placed
+  const h=(i*2654435761)>>>0;                           // deterministic variety
+  return [EXP.neutral,EXP.grin,EXP.calm,EXP.neutral][h%4];
 }
 function cellAt(e){
   const rect=cv.getBoundingClientRect(), scale=CSS/rect.width;
@@ -505,13 +535,19 @@ function aui(){ if(MODE!=='alka')return;
   else if(myRole===AL.turn){ t.textContent='● 내 차례 — 돌을 탭 → 당겨서 발사!'; t.className='me'; }
   else t.textContent=(AL.turn===1?'흑':'백')+' 차례'+(myRole?'':' (관전)');
 }
+let AFADERS=[], fadeIv=null;           // knocked-out stones cry & fade out
+function addFader(s){ AFADERS.push({x:s.x,y:s.y,o:s.o,t0:performance.now()}); kickFade(); }
+function kickFade(){ if(fadeIv)return;
+  fadeIv=setInterval(()=>{ AFADERS=AFADERS.filter(f=>performance.now()-f.t0<900);
+    if(MODE==='alka')arender();
+    if(!AFADERS.length){ clearInterval(fadeIv); fadeIv=null; } },50); }
 function alkaPhys(st,dt){              // fixed-substep integration + equal-mass elastic collisions
   let moving=false;
   const FR=Math.pow(0.28,dt);          // friction: velocity decays to 28%/s
   for(const s of st){ if(!s.a) continue;
     s.x+=s.vx*dt; s.y+=s.vy*dt; s.vx*=FR; s.vy*=FR;
     if(Math.hypot(s.vx,s.vy)<5){ s.vx=0; s.vy=0; }
-    if(s.x<AB0-8||s.x>AB1+8||s.y<AB0-8||s.y>AB1+8){ s.a=0; s.vx=0; s.vy=0; }   // off the board
+    if(s.x<AB0-8||s.x>AB1+8||s.y<AB0-8||s.y>AB1+8){ s.a=0; s.vx=0; s.vy=0; addFader(s); }  // off the board
     if(s.vx||s.vy) moving=true; }
   for(let i=0;i<st.length;i++)for(let j=i+1;j<st.length;j++){
     const a=st[i],b=st[j]; if(!a.a||!b.a)continue;
@@ -520,8 +556,20 @@ function alkaPhys(st,dt){              // fixed-substep integration + equal-mass
       a.x-=nx*ov; a.y-=ny*ov; b.x+=nx*ov; b.y+=ny*ov;
       const vn=(b.vx-a.vx)*nx+(b.vy-a.vy)*ny;
       if(vn<0){ const imp=-(1+0.92)*vn/2;
-        a.vx-=imp*nx; a.vy-=imp*ny; b.vx+=imp*nx; b.vy+=imp*ny; moving=true; } } }
+        a.vx-=imp*nx; a.vy-=imp*ny; b.vx+=imp*nx; b.vy+=imp*ny; moving=true;
+        a.hitAt=b.hitAt=performance.now(); } } }                                            // 😲 for a moment
   return moving;
+}
+function alkaExp(s,i){                 // situational tiger faces
+  const now=performance.now();
+  if(AL.winner) return s.o===AL.winner?EXP.love:EXP.cry;
+  if(i===selStone){
+    if(aim){ const p=Math.hypot(aim.sx-aim.x,aim.sy-aim.y); if(p>190) return EXP.steam; }   // pulling HARD
+    return EXP.wink; }
+  if(s.hitAt&&now-s.hitAt<700) return EXP.wow;
+  if(Math.hypot(s.vx,s.vy)>60) return EXP.grit;
+  if(AL.phase==='idle'&&seats[1]&&seats[2]&&s.o!==AL.turn) return EXP.sleep;                // not our turn: nap
+  return (i%3===0)?EXP.grin:EXP.neutral;
 }
 /* interval-driven (not rAF): keeps simulating even in hidden/throttled tabs, so the
    flicker still sends `settle` if they background the tab mid-shot */
@@ -548,12 +596,9 @@ function arender(){ if(MODE!=='alka')return;
     cx.beginPath(); cx.moveTo(p,AB0); cx.lineTo(p,AB1); cx.stroke(); }
   cx.strokeStyle='rgba(80,50,20,.8)'; cx.lineWidth=3;                    // board edge = out line
   cx.strokeRect(AB0,AB0,AB1-AB0,AB1-AB0);
-  for(const s of AL.stones){ if(!s.a)continue;
-    const r=AR, gr=cx.createRadialGradient(s.x-r*.35,s.y-r*.4,r*.1,s.x,s.y,r);
-    if(s.o===1){ gr.addColorStop(0,'#6a6a78'); gr.addColorStop(1,'#0a0a12'); }
-    else{ gr.addColorStop(0,'#ffffff'); gr.addColorStop(1,'#c3c7d4'); }
-    cx.fillStyle=gr; cx.beginPath(); cx.arc(s.x,s.y,r,0,7); cx.fill();
-    cx.strokeStyle='rgba(0,0,0,.35)'; cx.lineWidth=.8; cx.stroke(); }
+  for(const f of AFADERS){ const age=performance.now()-f.t0;                    // 😢 fading knock-outs
+    if(age<900) faceStone(f.x,f.y+age*0.02,AR,f.o,EXP.cry,Math.max(0,1-age/900)); }
+  AL.stones.forEach((s,i)=>{ if(!s.a)return; faceStone(s.x,s.y,AR,s.o,alkaExp(s,i)); });
   // sticky selection ring: the grabbed stone stays marked even between drag attempts
   if(selStone>=0&&AL.stones[selStone]&&AL.stones[selStone].a){
     const ss=AL.stones[selStone];
