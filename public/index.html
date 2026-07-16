@@ -130,7 +130,7 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
 </head>
 <body>
 <div class="wrap">
-  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.21</span>
+  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.22</span>
     <button type="button" id="btnMute" class="mutebtn" title="효과음 켜기/끄기">🔊</button></header>
 
   <!-- lobby -->
@@ -142,6 +142,7 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
       <button type="button" class="gitem on" data-mode="alka">🥌 알까기 <span class="soon">PLAY</span></button>
       <button type="button" class="gitem on" data-mode="beat">🎵 리듬 <span class="soon">PLAY</span></button>
       <button type="button" class="gitem on" data-mode="tet">🧱 테트리스 <span class="soon">PLAY</span></button>
+      <button type="button" class="gitem on" data-mode="mine">💣 망각의 지뢰 <span class="soon">PLAY</span></button>
       <div class="gitem">🗺️ 땅따먹기 <span class="soon">준비중</span></div>
     </div>
     <div class="field"><label>닉네임</label><input type="text" id="nick" maxlength="12" placeholder="예: 김선장"></div>
@@ -164,12 +165,13 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
         <select id="modeSel" class="msel" title="게임 전환 (라운드 사이에만 가능)">
           <option value="omok">⚫ 오목</option><option value="draw">🎨 그림</option>
           <option value="alka">🥌 알까기</option><option value="beat">🎵 리듬</option>
-          <option value="tet">🧱 테트리스</option></select>
+          <option value="tet">🧱 테트리스</option><option value="mine">💣 망각의 지뢰</option></select>
         <span id="turnmsg"></span>
       </div>
       <div class="wordbar hidden" id="wordbar"><span id="wordtxt"></span><span id="timer"></span></div>
       <div class="row hidden" id="wordPick" style="width:100%"></div>
       <div class="row hidden" id="undoBar" style="width:100%"></div>
+      <div class="row actions hidden" id="mineBar" style="width:100%"></div>
       <canvas id="board" width="600" height="600"></canvas>
       <div class="tools hidden" id="tools"></div>
       <div class="tools hidden" id="tpad"></div>
@@ -222,7 +224,8 @@ let MODE='omok', selMode='omok', timerIv=null,
     AL={stones:[],turn:1,winner:0,phase:'idle',auth:'[]',mine:false},
     BEAT=null,   // set by initBeat()
     SOLO=false, YOUIDX=0,   // solo (one player, both seats) / my member index within my team
-    TET=null;               // set by initTet()
+    TET=null,               // set by initTet()
+    MN=null;                // set by initMine()
 
 /* ---- lobby ---- */
 const CODE_CHARS='ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -244,7 +247,7 @@ function enter(code){ room=code; location.hash=code; inGame=true;
   seats={1:null,2:null}; myRole=0; retry=0; SOLO=false; YOUIDX=0; clearReconn(); $('log').innerHTML='';
   DRAW={phase:'lobby',roundEnd:0,youDrawer:false,word:null,mask:''};
   AL={stones:[],turn:1,winner:0,phase:'idle',auth:'[]',mine:false}; stopAsim();
-  initBeat(); stopBeat(); initTet(); stopTet();
+  initBeat(); stopBeat(); initTet(); stopTet(); initMine();
   setMode(selMode);                              // provisional; the server state message corrects it
   $('lobby').classList.add('hidden'); $('game').classList.remove('hidden');
   $('roomcode').textContent=code; ui(); connect(); draw(); if(MODE==='draw') clearDrawCanvas(); }
@@ -384,6 +387,48 @@ function handle(m){
     (m.list||[]).forEach((p,i)=>log('sys',`${md[i]||(i+1)+'.'} ${p.name} — ${p.score}점 · ${p.lines}줄`));
     TET.players=(m.list||[]).map(p=>({name:p.name,score:p.score,lines:p.lines,online:true}));
     tetLobbyUi(); renderTetScores(); return; }
+  /* ---- mine (망각의 지뢰) ---- */
+  if(m.t==='state'&&m.mode==='mine'){
+    // reconnect mid-placement: my un-submitted picks live only here — don't wipe them
+    const keepSel=(MODE==='mine'&&MN&&MN.phase==='place'&&m.phase==='place'&&MN.round===m.round
+      &&(m.role===1||m.role===2)&&!(m.subm&&m.subm[m.role])&&MN.sel.length)?MN.sel.slice():null;
+    setMode('mine'); initMine();
+    seats=m.seats; myRole=m.role; SOLO=false;
+    MN.phase=m.phase; MN.round=m.round; MN.turn=m.turn; MN.winner=m.winner;
+    MN.pos={1:m.pos[1],2:m.pos[2]}; MN.score={1:m.score[1],2:m.score[2]};
+    MN.used=m.used||[]; MN.boom=m.boom||[]; MN.treas=m.treas||[];
+    MN.tCount=m.tCount|0; MN.moves=m.moves|0; MN.minedCells=m.minedCells|0; MN.left=m.left|0;
+    MN.reveal=!!m.reveal; MN.subm={1:!!(m.subm&&m.subm[1]),2:!!(m.subm&&m.subm[2])};
+    MN.mines=m.mines||[]; MN.sel=(m.mines&&m.mines.length)?m.mines.slice():(keepSel||[]);
+    MN.all=m.all||null; MN.choices=m.choices||null;
+    mui(); mrender();
+    log('sys', myRole? `💣 망각의 지뢰 — 라운드 ${m.round}. ${MN.phase==='place'?'지뢰 15개를 몰래 심으세요! (배치 후에는 기억만 믿어야 해요)':''}` : '💣 망각의 지뢰 (관전)');
+    return; }
+  if(m.t==='msub'){ if(MODE!=='mine'||!MN)return; MN.subm[m.side]=true;
+    if(m.side===myRole)MN.pend=false; mui(); mrender(); return; }
+  if(m.t==='mopt'){ if(MODE!=='mine'||!MN)return; MN.reveal=!!m.v; mui(); mrender(); return; }
+  if(m.t==='mmove'){ if(MODE!=='mine'||!MN)return;
+    MN.pos[m.side]=m.to; MN.score={1:m.score[1],2:m.score[2]};
+    MN.turn=m.turn; MN.phase=m.phase; MN.winner=m.winner;
+    MN.tCount=m.tCount|0; MN.moves=m.moves|0; MN.left=m.left|0;
+    MN.choices=m.choices||null; if(m.all) MN.all=m.all;
+    if(m.boom){ if(!MN.boom.includes(m.to)) MN.boom.push(m.to);
+      MN.mines=MN.mines.filter(c=>c!==m.to); MN.sel=MN.sel.filter(c=>c!==m.to);
+      addMfx(m.to,'-5','#ff6f61'); sfxBoom();
+      log('sys',`💥 ${mnName(m.side)} 지뢰 폭발! -5점${m.boom>1?' — 겹친 지뢰 2개가 한꺼번에!':''} 출발지 근처로 강제 이동`); }
+    else if(m.tre){ MN.treas=MN.treas.filter(t=>t!==m.to);
+      if(!MN.used.some(u=>u.i===m.to)) MN.used.push({i:m.to,v:m.tre,s:m.side,tre:1});
+      addMfx(m.to,'+'+m.tre,'#ffd76a'); sfxGood();
+      log('sys',`💎 ${mnName(m.side)} ${MN.tCount}번째 보물 획득! +${m.tre}점`); }
+    else{ if(!MN.used.some(u=>u.i===m.to)) MN.used.push({i:m.to,v:m.gain,s:m.side});
+      if(m.gain>0) addMfx(m.to,'+'+m.gain,'#3ee08a');
+      sfxPlace(); }
+    if(MN.winner){ sfxGood();
+      log('sys', MN.winner===3? `무승부! ${MN.score[1]}:${MN.score[2]}` : `🏆 ${mnName(MN.winner)} 승리! (${MN.score[1]}:${MN.score[2]})`); }
+    mui(); mrender(); return; }
+  if(m.t==='mre'){ if(MODE!=='mine'||!MN)return;
+    MN.pos[m.side]=m.to; MN.turn=m.turn; MN.phase='move'; MN.choices=null;
+    sfxPlace(); mui(); mrender(); return; }
   /* ---- omok ---- */
   if(m.t==='state'){ setMode('omok'); board=m.board.split('').map(Number); turn=m.turn; winner=m.winner;
     winLine=m.winLine; seats=m.seats; myRole=m.role; SOLO=!!m.solo; YOUIDX=m.youIdx||0;
@@ -400,7 +445,7 @@ function handle(m){
   if(m.t==='err'&&m.code==='full'){ inGame=false; leave();
     alert('방이 가득 찼어요 (최대 '+(m.max||20)+'명). 다른 방 코드를 사용해 주세요!'); return; }
   if(m.t==='roster'){ seats=m.seats; if(typeof m.solo!=='undefined') SOLO=!!m.solo;
-    $('watch').textContent=m.watchers?`👀 관전 ${m.watchers}명`:''; ui(); aui(); return; }
+    $('watch').textContent=m.watchers?`👀 관전 ${m.watchers}명`:''; ui(); aui(); mui(); if(MODE==='mine')mrender(); return; }
   if(m.t==='chat'){ log('chat',m.text,m.name); return; }
   if(m.t==='sys'){ log('sys',m.text); return; }
 }
@@ -588,19 +633,21 @@ cv.addEventListener('click',e=>{ if(MODE!=='omok'||lastPT==='touch')return; cons
 /* ---- draw mode (그림그리기) ---- */
 const DCOL=['#111827','#e02d2d','#2563eb','#16a34a','#f59e0b','#9333ea','#8b5a2b','#ffffff'];
 function setMode(mo){ MODE=mo;
-  const two = mo==='omok'||mo==='alka';           // 2-seat games use the pl1/pl2 panels
+  const two = mo==='omok'||mo==='alka'||mo==='mine';    // 2-seat games use the pl1/pl2 panels
   const multi = mo==='draw'||mo==='beat'||mo==='tet';   // everyone-plays games use scores + wordbar
   $('pl1').classList.toggle('hidden',!two); $('pl2').classList.toggle('hidden',!two);
   $('scores').classList.toggle('hidden',!multi); $('wordbar').classList.toggle('hidden',!multi);
   $('chat').placeholder=mo==='draw'?'정답 입력…':'채팅…';
+  if(mo!=='omok'){ oDrag=null; stopOAnim(); hover=-1; }   // a mid-touch mode switch must not leak the aim loop
   $('btnRestart').textContent='↻ 새 판';
-  $('btnRestart').title = mo==='alka' ? '선공을 교대해서 새 판을 시작합니다' : '흑백을 교대해서 새 판을 시작합니다';
+  $('btnRestart').title = mo==='alka' ? '선공을 교대해서 새 판을 시작합니다'
+    : mo==='mine' ? '지뢰를 처음부터 다시 심고 새 판을 시작합니다' : '흑백을 교대해서 새 판을 시작합니다';
   if(mo!=='alka') stopAsim();
   if(mo!=='beat') stopBeat();
   if(mo!=='draw') stopTimer();
   $('btnBegin').textContent = mo==='beat' ? '🎵 라운드 시작' : mo==='tet' ? '🧱 게임 시작' : '🎨 라운드 시작';
   $('tools').classList.add('hidden'); $('btnBegin').classList.add('hidden'); $('btnSolo').classList.add('hidden');
-  $('wobBox').classList.add('hidden'); $('tpad').classList.add('hidden');
+  $('wobBox').classList.add('hidden'); $('tpad').classList.add('hidden'); $('mineBar').classList.add('hidden');
   $('btnUndo').classList.add('hidden'); $('btnResign').classList.add('hidden');
   $('beatCfg').classList.toggle('hidden',mo!=='beat');
   hideWordPick(); hideUndoBar();
@@ -855,6 +902,228 @@ cv.addEventListener('pointerup',()=>{ if(MODE!=='alka'||!aim)return;
 cv.addEventListener('pointercancel',()=>{ if(MODE!=='alka')return;
   aim=null; arender(); });                    // browser stole the gesture: KEEP the selection, just retry the pull
 
+/* ---- mine mode (망각의 지뢰): 지뢰를 심고, 기억하고, 추리한다 — 데스게임 원작 규칙 ---- */
+const M_SZ=11, M_CELLS=121, M_N=15, M_MAX=200;
+const M_ST={1:10,2:110}, M_TR=[0,60,120];              // starts a11/k1 · treasures a1/f6/k11
+const M_ACC={1:'#35dcff',2:'#ffb454'};                 // P1 cyan / P2 amber accents
+const mnAdj=i=>{ const x=i%M_SZ,y=(i/M_SZ)|0,out=[];
+  for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){ if(!dx&&!dy)continue;
+    const nx=x+dx,ny=y+dy; if(nx>=0&&nx<M_SZ&&ny>=0&&ny<M_SZ)out.push(ny*M_SZ+nx); }
+  return out; };
+const M_BAN=(()=>{ const s=new Set(M_TR);              // no-mine zone: treasures + 2 around each start
+  for(const st of [M_ST[1],M_ST[2]]){ const x=st%M_SZ,y=(st/M_SZ)|0;
+    for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){ const nx=x+dx,ny=y+dy;
+      if(nx>=0&&nx<M_SZ&&ny>=0&&ny<M_SZ)s.add(ny*M_SZ+nx); } }
+  return s; })();
+const M_PAD=30, M_TOP=56, M_CW=(600-M_PAD*2)/M_SZ;     // 11x11 cells under a HUD strip
+function initMine(){ MN={phase:'place',round:1,turn:0,winner:0,pos:{1:M_ST[1],2:M_ST[2]},
+  score:{1:0,2:0},used:[],boom:[],treas:M_TR.slice(),tCount:0,moves:0,minedCells:0,left:0,
+  reveal:false,subm:{1:false,2:false},pend:false,mines:[],sel:[],all:null,choices:null,hov:-1,fx:[]}; }
+function mnName(s){ return (seats&&seats[s])?seats[s].name:(s===1?'P1':'P2'); }
+const mcx=i=>M_PAD+(i%M_SZ)*M_CW, mcy=i=>M_TOP+((i/M_SZ)|0)*M_CW;
+function mCellAt(x,y){ const gx=Math.floor((x-M_PAD)/M_CW), gy=Math.floor((y-M_TOP)/M_CW);
+  return (gx<0||gx>=M_SZ||gy<0||gy>=M_SZ)?-1:gy*M_SZ+gx; }
+/* floating score popups (+2 / -5 / +15) */
+let mfxIv=null;
+function addMfx(i,txt,col){ if(!MN)return; MN.fx.push({i,txt,col,t0:performance.now()}); kickMfx(); }
+function kickMfx(){ if(mfxIv)return;
+  mfxIv=setInterval(()=>{ if(!MN||!MN.fx.length||MODE!=='mine'){ if(MN)MN.fx=[]; clearInterval(mfxIv); mfxIv=null; return; }
+    MN.fx=MN.fx.filter(f=>performance.now()-f.t0<1100); mrender();
+    if(!MN.fx.length){ clearInterval(mfxIv); mfxIv=null; } },50); }
+function mui(){ if(MODE!=='mine'||!MN)return;
+  for(const s of [1,2]){ const el=$('pl'+s), nm=el.querySelector('.nm'), st=el.querySelector('.st');
+    const p=seats&&seats[s];
+    nm.textContent=p?p.name:'대기 중…';
+    st.textContent=p?((p.online?'온라인':'오프라인')+' · '+(MN.score[s]|0)+'점'+(p.w?' · 🏆'+p.w:'')):'';
+    el.classList.toggle('turn', !MN.winner&&MN.phase!=='place'&&MN.turn===s&&!!(seats[1]&&seats[2]));
+    el.classList.toggle('me', myRole===s);
+    el.querySelector('.pj').classList.add('hidden'); }
+  $('btnResign').classList.toggle('hidden', !(myRole&&!MN.winner&&!!(seats&&seats[1]&&seats[2])));
+  $('btnRestart').classList.toggle('hidden', !(MN.winner&&(myRole===1||myRole===2)));
+  $('btnRestart').disabled=false;
+  const place=MN.phase==='place'&&(myRole===1||myRole===2);
+  $('mineBar').classList.toggle('hidden',!place);
+  if(place) buildMineBar();
+  const t=$('turnmsg'); t.className='';
+  if(MN.winner===3){ t.textContent=`무승부! ${MN.score[1]}:${MN.score[2]}`; t.className='win'; }
+  else if(MN.winner){ t.textContent=(MN.winner===myRole?'🏆 승리!':(myRole?'패배…':'게임 종료'))+` ${MN.score[1]}:${MN.score[2]}`; t.className='win'; }
+  else if(MN.phase==='place'){
+    t.textContent = !(seats&&seats[1]&&seats[2]) ? '상대를 기다리는 중… 초대링크를 보내세요!'
+      : myRole ? (MN.subm[myRole]?'🤫 상대의 지뢰 배치를 기다리는 중…':`💣 지뢰 ${MN.sel.length}/${M_N} — 몰래 심는 중`)
+      : '두 플레이어가 지뢰를 심는 중… (관전)'; }
+  else if(MN.phase==='respawn'){
+    if(myRole===MN.turn){ t.textContent='💥 복귀할 칸을 고르세요 (주황 칸)'; t.className='me'; }
+    else t.textContent=mnName(MN.turn)+' 복귀할 곳 고르는 중…'; }
+  else if(myRole===MN.turn){ t.textContent='● 내 차례 — 인접한 칸으로 이동'; t.className='me'; }
+  else t.textContent=mnName(MN.turn)+' 차례'+(myRole?'':' (관전)');
+}
+function buildMineBar(){ const el=$('mineBar'); el.innerHTML='';
+  const done=!!MN.subm[myRole]||MN.pend;              // pend: mset sent, ack not yet back — freeze edits
+  const s=document.createElement('span');
+  s.style.cssText='align-self:center;font-size:13px;font-weight:800;flex:1 1 100%';
+  s.textContent=MN.subm[myRole]?'✅ 배치 완료 — 이제 위치를 머릿속에 새기세요!'
+    :MN.pend?'⏳ 배치 전송 중…':`💣 ${MN.sel.length} / ${M_N}개 배치 — 칸을 눌러 심고/빼기`;
+  el.appendChild(s);
+  const mk=(txt,cls,fn,dis,tip)=>{ const b=document.createElement('button'); b.type='button';
+    b.className='btn'+(cls?' '+cls:''); b.textContent=txt; b.disabled=!!dis; if(tip)b.title=tip;
+    b.onclick=fn; el.appendChild(b); return b; };
+  mk(MN.reveal?'👁 지뢰 표시 (쉬움)':'🧠 암기 모드 (원작)','',()=>send({t:'mopt',v:MN.reveal?0:1}),
+    MN.subm[1]||MN.subm[2]||MN.pend,                  // locked once anyone committed a placement
+    '원작 규칙: 게임이 시작되면 자기 지뢰도 보이지 않습니다. 두 플레이어 모두에게 적용!');
+  mk('🎲 랜덤','',mineRndFill,done,'남은 개수를 무작위로 채웁니다');
+  mk('🧹 초기화','',()=>{ MN.sel=[]; mui(); mrender(); },done);
+  mk('✅ 배치 완료','primary',()=>{ if(MN.sel.length===M_N&&!MN.pend){ MN.pend=true;
+    send({t:'mset',cells:MN.sel.slice()}); mui(); } },
+    done||MN.sel.length!==M_N);
+}
+function mineRndFill(){ if(!MN||MN.subm[myRole]||MN.pend)return;
+  const pool=[]; for(let i=0;i<M_CELLS;i++) if(!M_BAN.has(i)&&!MN.sel.includes(i)) pool.push(i);
+  while(MN.sel.length<M_N&&pool.length) MN.sel.push(pool.splice((Math.random()*pool.length)|0,1)[0]);
+  sfxPlace(); mui(); mrender(); }
+function mnExp(s){ if(MN.winner) return MN.winner===3?EXP.calm:(MN.winner===s?EXP.love:EXP.cry);
+  if(MN.phase==='place') return EXP.neutral;
+  if(MN.phase==='respawn'&&MN.turn===s) return EXP.dizzy;
+  const f=MN.fx.find(f2=>f2.i===MN.pos[s]);
+  if(f&&f.txt==='-5') return EXP.dizzy;
+  if(f&&f.txt[0]==='+') return EXP.wow;
+  if(MN.phase==='move'&&MN.turn===s) return EXP.grin;
+  return EXP.sleep; }
+function mrender(){ if(MODE!=='mine'||!MN)return;
+  cx.setTransform(DPR,0,0,DPR,0,0);
+  cx.fillStyle='#0c1120'; cx.fillRect(0,0,CSS,CSS);
+  const placing=MN.phase==='place', me2=(myRole===1||myRole===2);
+  /* HUD strip */
+  const hy=30;
+  for(const s of [1,2]){ const p=seats&&seats[s];
+    cx.textAlign=s===1?'left':'right'; const x=s===1?M_PAD:CSS-M_PAD;
+    cx.fillStyle=M_ACC[s]; cx.font='800 14px Pretendard,sans-serif';
+    cx.fillText((p?p.name:'—').slice(0,8),x,hy-11);
+    cx.fillStyle='#eef3fb'; cx.font='800 23px Pretendard,sans-serif';
+    cx.fillText(String(MN.score[s]|0),x,hy+13);
+    if(!MN.winner&&!placing&&MN.turn===s){ cx.fillStyle=M_ACC[s];
+      cx.font='800 10px Pretendard,sans-serif'; cx.fillText(s===1?'▶ 차례':'차례 ◀',x,hy+26); } }
+  cx.textAlign='center'; cx.fillStyle='rgba(159,178,207,.85)'; cx.font='700 12px Pretendard,sans-serif';
+  if(placing) cx.fillText(`💣 ${M_N}개 배치 — 붉은 구역(출발지 주변·보물칸)은 금지`,CSS/2,hy-4);
+  else cx.fillText(`💣 지뢰 ${MN.left} (겹침 ${Math.max(0,M_N*2-MN.minedCells)}) · 💎 다음 +${[10,15,20][MN.tCount]||'—'} · 턴 ${MN.moves}${MN.moves>=M_MAX-30?'/'+M_MAX:''}`,CSS/2,hy-4);
+  cx.fillStyle='rgba(159,178,207,.45)'; cx.font='700 10.5px Pretendard,sans-serif';
+  cx.fillText(placing?'상대도 같은 칸에 심을 수 있어요 — 겹치면 한 번에 터집니다':'득점 = 도착한 칸 주변 8칸의 지뢰 개수 (칸마다 1회)',CSS/2,hy+12);
+  /* coordinates like the show (a-k / 1-11) */
+  cx.fillStyle='rgba(159,178,207,.4)'; cx.font='700 9px Pretendard,sans-serif';
+  for(let k=0;k<M_SZ;k++){
+    cx.textAlign='center'; cx.fillText(String(k+1),M_PAD+k*M_CW+M_CW/2,M_TOP-3);
+    cx.textAlign='right'; cx.fillText('abcdefghijk'[k],M_PAD-5,M_TOP+k*M_CW+M_CW/2+3); }
+  /* cells */
+  for(let i=0;i<M_CELLS;i++){ const x=mcx(i),y=mcy(i);
+    cx.fillStyle=((i%M_SZ)+((i/M_SZ)|0))%2?'#0e1628':'#111b31';
+    cx.fillRect(x,y,M_CW,M_CW);
+    if(placing&&me2&&!MN.subm[myRole]&&M_BAN.has(i)){
+      cx.fillStyle='rgba(255,107,94,.10)'; cx.fillRect(x,y,M_CW,M_CW); } }
+  cx.strokeStyle='rgba(140,170,220,.13)'; cx.lineWidth=1;
+  for(let k=0;k<=M_SZ;k++){
+    cx.beginPath(); cx.moveTo(M_PAD+k*M_CW,M_TOP); cx.lineTo(M_PAD+k*M_CW,M_TOP+M_SZ*M_CW); cx.stroke();
+    cx.beginPath(); cx.moveTo(M_PAD,M_TOP+k*M_CW); cx.lineTo(M_PAD+M_SZ*M_CW,M_TOP+k*M_CW); cx.stroke(); }
+  /* start cells */
+  for(const s of [1,2]){ const i=M_ST[s],x=mcx(i),y=mcy(i);
+    cx.strokeStyle=M_ACC[s]; cx.lineWidth=1.6; cx.setLineDash([4,3]);
+    cx.strokeRect(x+3,y+3,M_CW-6,M_CW-6); cx.setLineDash([]);
+    cx.fillStyle=M_ACC[s]; cx.font='800 8.5px Pretendard,sans-serif'; cx.textAlign='center';
+    cx.fillText('P'+s,x+M_CW/2,y+M_CW-5); }
+  /* remaining treasures */
+  cx.textBaseline='middle';
+  for(const t2 of MN.treas){ const x=mcx(t2)+M_CW/2,y=mcy(t2)+M_CW/2;
+    cx.save(); cx.shadowColor='#ffd76a'; cx.shadowBlur=13;
+    cx.font='25px sans-serif'; cx.textAlign='center'; cx.fillText('💎',x,y+2); cx.restore(); }
+  /* scored cells: minesweeper-style numbers, tiny tick = who claimed it */
+  for(const u of MN.used){ const x=mcx(u.i)+M_CW/2,y=mcy(u.i)+M_CW/2;
+    cx.textAlign='center';
+    if(u.tre){ cx.font='700 11px Pretendard,sans-serif'; cx.fillStyle='rgba(255,215,106,.8)';
+      cx.fillText('💎+'+u.v,x,y); }
+    else if(u.v===0){ cx.fillStyle='rgba(159,178,207,.4)'; cx.font='800 15px Pretendard,sans-serif'; cx.fillText('·',x,y); }
+    else{ cx.fillStyle=u.v>=5?'#ff6f61':u.v>=3?'#ffb454':u.v===2?'#3ee08a':'#7fd7ff';
+      cx.font='800 17px Pretendard,sans-serif'; cx.fillText(String(u.v),x,y); }
+    cx.fillStyle=M_ACC[u.s]||'#888'; cx.fillRect(mcx(u.i)+3,mcy(u.i)+3,4,4); }
+  /* exploded spots */
+  cx.textAlign='center';
+  for(const b of MN.boom){ cx.globalAlpha=.6; cx.font='12px sans-serif';
+    cx.fillText('💥',mcx(b)+M_CW-10,mcy(b)+11); cx.globalAlpha=1; }
+  /* my mines (placement always; in-game only in 쉬움 mode) + final reveal */
+  const showMines = placing ? (me2?MN.sel:[]) : (MN.reveal&&me2?MN.mines:[]);
+  cx.textAlign='center';
+  for(const c of showMines){ cx.font=placing?'21px sans-serif':'14px sans-serif';
+    cx.fillText('💣',mcx(c)+M_CW/2,mcy(c)+M_CW/2+2); }
+  if(MN.winner&&MN.all){ for(const s of [1,2]) for(const c of MN.all[s]||[]){
+    const x=mcx(c)+M_CW/2,y=mcy(c)+M_CW/2;
+    cx.strokeStyle=M_ACC[s]; cx.lineWidth=1.6;
+    cx.beginPath(); cx.arc(x,y,M_CW*(s===1?0.30:0.38),0,7); cx.stroke();
+    cx.font='14px sans-serif'; cx.globalAlpha=.85; cx.fillText('💣',x,y+1); cx.globalAlpha=1; } }
+  /* legal moves / respawn choices / placement hover */
+  const other=myRole===1?2:1;
+  const myMove=!MN.winner&&MN.phase==='move'&&me2&&myRole===MN.turn&&!!(seats&&seats[1]&&seats[2]);
+  if(myMove) for(const i of mnAdj(MN.pos[myRole])){ if(i===MN.pos[other])continue;
+    const x=mcx(i),y=mcy(i),hov=i===MN.hov;
+    cx.fillStyle=hov?'rgba(53,220,255,.20)':'rgba(53,220,255,.08)';
+    cx.fillRect(x+1,y+1,M_CW-2,M_CW-2);
+    cx.strokeStyle='rgba(53,220,255,'+(hov?'.95':'.45')+')'; cx.lineWidth=hov?2.2:1.2;
+    cx.strokeRect(x+2,y+2,M_CW-4,M_CW-4); }
+  if(MN.phase==='respawn'&&MN.choices) for(const i of MN.choices){
+    const x=mcx(i),y=mcy(i),act=myRole===MN.turn;
+    cx.fillStyle='rgba(255,180,84,.24)'; cx.fillRect(x+1,y+1,M_CW-2,M_CW-2);
+    cx.strokeStyle='#ffb454'; cx.lineWidth=act&&i===MN.hov?2.6:1.5; cx.setLineDash([5,3]);
+    cx.strokeRect(x+2,y+2,M_CW-4,M_CW-4); cx.setLineDash([]); }
+  if(placing&&me2&&!MN.subm[myRole]&&MN.hov>=0&&!M_BAN.has(MN.hov)){
+    cx.strokeStyle='rgba(255,107,94,.85)'; cx.lineWidth=2;
+    cx.strokeRect(mcx(MN.hov)+2,mcy(MN.hov)+2,M_CW-4,M_CW-4); }
+  /* pieces: tigers with an accent ring */
+  const pr=M_CW*0.40;
+  for(const s of [1,2]){ const x=mcx(MN.pos[s])+M_CW/2,y=mcy(MN.pos[s])+M_CW/2;
+    cx.strokeStyle=M_ACC[s]; cx.lineWidth=2.5;
+    cx.beginPath(); cx.arc(x,y+2,pr+3,0,7); cx.stroke();
+    faceStone(x,y,pr,s,mnExp(s)); }
+  /* score popups */
+  cx.textBaseline='alphabetic';
+  for(const f of MN.fx){ const age=performance.now()-f.t0, a=Math.max(0,1-age/1100);
+    cx.globalAlpha=a; cx.fillStyle=f.col; cx.font='800 20px Pretendard,sans-serif'; cx.textAlign='center';
+    cx.fillText(f.txt,mcx(f.i)+M_CW/2,mcy(f.i)+10-age*0.022); cx.globalAlpha=1; }
+  /* end banner */
+  if(MN.winner){ const cy2=M_TOP+M_SZ*M_CW/2;
+    cx.fillStyle='rgba(5,8,16,.5)'; cx.fillRect(0,cy2-44,CSS,88);
+    cx.fillStyle=MN.winner===3?'#eef3fb':M_ACC[MN.winner]; cx.font='800 32px Pretendard,sans-serif'; cx.textAlign='center';
+    cx.fillText(MN.winner===3?'🤝 무승부!':'🏆 '+mnName(MN.winner)+' 승리!',CSS/2,cy2);
+    cx.fillStyle='#eef3fb'; cx.font='800 19px Pretendard,sans-serif';
+    cx.fillText(MN.score[1]+' : '+MN.score[2]+'  ·  💣 전체 지뢰 공개',CSS/2,cy2+29); }
+}
+function mineTap(i){ if(!MN||MN.winner)return;
+  if(MN.phase==='place'){
+    if(!(myRole===1||myRole===2)||MN.subm[myRole]||MN.pend||M_BAN.has(i))return;
+    const k=MN.sel.indexOf(i);
+    if(k>=0){ MN.sel.splice(k,1); sfxPlace(); }
+    else if(MN.sel.length>=M_N){ log('sys','지뢰는 15개까지! 심어둔 지뢰를 눌러 빼세요'); return; }
+    else{ MN.sel.push(i); sfxPlace(); }
+    mui(); mrender(); return; }
+  if(MN.phase==='respawn'){
+    if(myRole!==MN.turn||!MN.choices||!MN.choices.includes(i))return;
+    send({t:'mre',i}); return; }
+  if(MN.phase==='move'){
+    if(myRole!==MN.turn||!(seats&&seats[1]&&seats[2]))return;
+    const other=myRole===1?2:1;
+    if(i===MN.pos[other]||!mnAdj(MN.pos[myRole]).includes(i))return;
+    send({t:'mmove',i}); return; } }
+let mnDown=null;
+cv.addEventListener('pointerdown',e=>{ if(MODE!=='mine'||!MN)return;
+  const [x,y]=evPt(e); mnDown=[x,y];
+  const i=mCellAt(x,y); if(i!==MN.hov){ MN.hov=i; mrender(); }
+  try{cv.setPointerCapture(e.pointerId);}catch(err){} e.preventDefault(); });
+cv.addEventListener('pointermove',e=>{ if(MODE!=='mine'||!MN)return;
+  const [x,y]=evPt(e); const i=mCellAt(x,y); if(i!==MN.hov){ MN.hov=i; mrender(); } });
+cv.addEventListener('pointerup',e=>{ if(MODE!=='mine'||!MN||!mnDown)return;
+  const [x,y]=evPt(e), d2=Math.hypot(x-mnDown[0],y-mnDown[1]); mnDown=null;
+  if(d2>16)return;                              // a drag, not a tap
+  const i=mCellAt(x,y); if(i>=0) mineTap(i); });
+cv.addEventListener('pointercancel',()=>{ if(MODE==='mine')mnDown=null; });
+cv.addEventListener('mouseleave',()=>{ if(MODE!=='mine'||!MN)return;
+  if(MN.hov!==-1){ MN.hov=-1; mrender(); } });
+initMine();
+
 /* ---- beat mode (리듬): local judgment, scores relayed ---- */
 function initBeat(){ if(BEAT&&BEAT.loop) clearInterval(BEAT.loop);
   BEAT={phase:'lobby',players:[],live:{},chart:null,perfStart:0,roundN:0,
@@ -1015,6 +1284,15 @@ function sfxClear(n){ if(!sfxOK())return; try{ const w=actx.currentTime; // 줄 
     o.type='square'; o.frequency.value=f2;
     g2.gain.setValueAtTime(0.07,w+i*0.06); g2.gain.exponentialRampToValueAtTime(0.001,w+i*0.06+0.12);
     o.connect(g2).connect(actx.destination); o.start(w+i*0.06); o.stop(w+i*0.06+0.13); });}catch(e){} }
+function sfxBoom(){ if(!sfxOK())return; try{ const w=actx.currentTime;   // 지뢰 쾅
+  const s=actx.createBufferSource(),g2=actx.createGain(),f=actx.createBiquadFilter();
+  s.buffer=noise(); f.type='lowpass'; f.frequency.setValueAtTime(700,w); f.frequency.exponentialRampToValueAtTime(60,w+0.4);
+  g2.gain.setValueAtTime(0.45,w); g2.gain.exponentialRampToValueAtTime(0.001,w+0.45);
+  s.connect(f).connect(g2).connect(actx.destination); s.start(w); s.stop(w+0.5);
+  const o=actx.createOscillator(),g3=actx.createGain();
+  o.type='sine'; o.frequency.setValueAtTime(120,w); o.frequency.exponentialRampToValueAtTime(38,w+0.35);
+  g3.gain.setValueAtTime(0.35,w); g3.gain.exponentialRampToValueAtTime(0.001,w+0.4);
+  o.connect(g3).connect(actx.destination); o.start(w); o.stop(w+0.42);}catch(e){} }
 function sfxGood(){ if(!sfxOK())return; try{ const w=actx.currentTime;   // 정답/승리 띠링
   [660,990].forEach((f2,i)=>{ const o=actx.createOscillator(),g2=actx.createGain();
     o.type='triangle'; o.frequency.value=f2;

@@ -31,6 +31,7 @@ const emptyGame = (mode) => ({
   a: null,                           // ── alka: {stones,turn,winner,round,phase,moves}
   b: null,                           // ── beat: {players,order,phase,seed,startAt,roundN}
   tt: null,                          // ── tet:  {players,order,phase,seed,startAt,roundN}
+  mn: null,                          // ── mine: {phase,mines,pos,score,turn,winner,used,boom,treas,…}
 });
 const CHOOSE_MS = 15_000;
 const emptyDraw = () => ({ players: {}, order: [], drawer: null, word: null,
@@ -47,6 +48,32 @@ const emptyBeat = () => ({ players: {}, order: [], phase: 'lobby', seed: 0, star
 // tet (테트리스): same seeded 7-bag everywhere, played locally; server relays scores + garbage attacks
 const TET_MAX = 600_000;   // hard cap per round (alarm forces results)
 const emptyTet = () => ({ players: {}, order: [], phase: 'lobby', seed: 0, startAt: 0, roundN: 0 });
+// mine (망각의 지뢰, 데스게임): 11x11, each secretly buries 15 mines, adjacency scoring + treasure race.
+// Server is the only holder of both mine sets — clients only ever see their own (or none in 암기 mode).
+const MSZ = 11, MCELLS = MSZ * MSZ, M_MINES = 15, M_MAXMV = 200;
+const M_START = { 1: 10, 2: 110 };            // a11 (top-right) / k1 (bottom-left)
+const M_TREAS = [0, 60, 120];                 // a1 / f6 (center) / k11
+const M_TSCORE = [10, 15, 20];                // 1st / 2nd / 3rd treasure
+const mAdj = i => { const x = i % MSZ, y = (i / MSZ) | 0, out = [];
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    if (!dx && !dy) continue;
+    const nx = x + dx, ny = y + dy;
+    if (nx >= 0 && nx < MSZ && ny >= 0 && ny < MSZ) out.push(ny * MSZ + nx); }
+  return out; };
+const M_FORBID = (() => { const s = new Set(M_TREAS);   // no mines on treasures or within 2 of either start
+  for (const st of [M_START[1], M_START[2]]) { const x = st % MSZ, y = (st / MSZ) | 0;
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+      const nx = x + dx, ny = y + dy;
+      if (nx >= 0 && nx < MSZ && ny >= 0 && ny < MSZ) s.add(ny * MSZ + nx); } }
+  return s; })();
+const emptyMine = () => ({ phase: 'place',    // 'place' -> 'move'/'respawn' -> 'over'
+  mines: { 1: [], 2: [] }, subm: { 1: false, 2: false },
+  pos: { 1: M_START[1], 2: M_START[2] }, score: { 1: 0, 2: 0 },
+  turn: 0, winner: 0,                         // winner: 1|2|3(draw)
+  used: [],                                   // [{i,v,s,tre?}] publicly scored cells
+  boom: [], treas: M_TREAS.slice(), tCount: 0,
+  orig: { 1: [], 2: [] },                     // placement snapshot (booms splice `mines`, not this)
+  round: 1, moves: 0, minedCells: 0, reveal: false });
 
 export class GameRoom {
   constructor(ctx) {
@@ -129,6 +156,20 @@ export class GameRoom {
       return { t: 'state', mode: 'tet', phase: tt.phase, seed: tt.seed, startAt: tt.startAt,
                now: Date.now(), roundN: tt.roundN, players: this.tetPub(tt) };
     }
+    if (g.mode === 'mine') {
+      const mn = g.mn;
+      const me = (role === 1 || role === 2);
+      return { t: 'state', mode: 'mine', role, seats: this.seatsPub(g),
+               phase: mn.phase, round: mn.round, turn: mn.turn, winner: mn.winner,
+               pos: mn.pos, score: mn.score, used: mn.used, boom: mn.boom, treas: mn.treas,
+               tCount: mn.tCount, moves: mn.moves, minedCells: mn.minedCells, reveal: mn.reveal,
+               left: mn.mines[1].length + mn.mines[2].length,
+               subm: { 1: mn.subm[1], 2: mn.subm[2] },
+               // your own mines only — and in 암기 mode not even those once the game starts
+               mines: me && (mn.phase === 'place' || mn.reveal) ? mn.mines[role] : [],
+               all: mn.phase === 'over' ? (mn.orig || mn.mines) : null,   // final reveal: the ORIGINAL minefield
+               choices: mn.phase === 'respawn' ? this.mineChoices(g) : null };
+    }
     return { t: 'state', mode: 'omok', board: g.board.join(''), turn: g.turn, winner: g.winner, winLine: g.winLine,
              round: g.round, last: g.last, role, seats: this.seatsPub(g), solo: this.isSolo(g),
              youIdx: (g.tm && role && g.tm.mates[role] && g.tm.mates[role].token === token) ? 1 : 0 };
@@ -155,6 +196,17 @@ export class GameRoom {
         return { name: p.name, score: p.score | 0, maxCombo: p.maxCombo | 0, acc: p.acc || 0, finished: !!p.finished }; })
       .sort((x, y) => y.score - x.score);
     this.bcast({ t: 'bres', roundN: b.roundN, list });
+  }
+  /* ---- mine-mode helpers ---- */
+  mineChoices(g) {                               // respawn spots: the cells around your own start
+    const mn = g.mn, other = mn.turn === 1 ? 2 : 1;
+    return mAdj(M_START[mn.turn]).filter(i => i !== mn.pos[other]);
+  }
+  mineStateAll(g) {                              // hidden-info game: everyone gets a personalized state
+    for (const w of this.ctx.getWebSockets()) {
+      const a = w.deserializeAttachment() || {};
+      try { w.send(JSON.stringify(this.stateFor(g, a.role | 0, a.token))); } catch {}
+    }
   }
   /* ---- tet-mode helpers ---- */
   tetPub(tt) {
@@ -286,11 +338,12 @@ export class GameRoom {
       const token = String(m.token || '').slice(0, 40);
       if (!token) return;
       let dirty = false;
-      if (!g.mode) { g.mode = ['draw', 'alka', 'beat', 'tet'].includes(m.mode) ? m.mode : 'omok';
+      if (!g.mode) { g.mode = ['draw', 'alka', 'beat', 'tet', 'mine'].includes(m.mode) ? m.mode : 'omok';
         if (g.mode === 'draw') g.d = emptyDraw();
         else if (g.mode === 'alka') g.a = emptyAlka();
         else if (g.mode === 'beat') g.b = emptyBeat();
-        else if (g.mode === 'tet') g.tt = emptyTet(); dirty = true; }
+        else if (g.mode === 'tet') g.tt = emptyTet();
+        else if (g.mode === 'mine') g.mn = emptyMine(); dirty = true; }
       if (g.mode === 'draw' || g.mode === 'beat' || g.mode === 'tet') {   // pool games: everyone plays
         const pool = g.mode === 'draw' ? g.d : g.mode === 'beat' ? g.b : g.tt;
         const live = this.liveTokens(ws);
@@ -326,7 +379,9 @@ export class GameRoom {
         role = s; isMate = true;                                                        // reclaim my TEAM slot
         if (!g.tm.mates[s].online || g.tm.mates[s].name !== name) { g.tm.mates[s].online = true; g.tm.mates[s].name = name; dirty = true; }
       }
-      const midGame = g.mode === 'alka' ? (g.a.moves > 0 && !g.a.winner) : (g.moves > 0 && !g.winner);
+      const midGame = g.mode === 'alka' ? (g.a.moves > 0 && !g.a.winner)
+        : g.mode === 'mine' ? (g.mn && !g.mn.winner && (g.mn.subm[1] || g.mn.subm[2]))
+        : (g.moves > 0 && !g.winner);
       if (!role && this.isSolo(g)) {              // solo owner was holding BOTH seats: a real friend takes white
         g.seats[2] = { token, name, online: true }; role = 2; dirty = true;
         this.bcast({ t: 'sys', text: `${name}님이 백을 이어받아 혼자 두기가 해제됐어요!` });
@@ -571,6 +626,114 @@ export class GameRoom {
       return;
     }
 
+    /* ---- mine (망각의 지뢰) ---- */
+    if (m.t === 'mset') {                         // secretly submit your 15 mines
+      if (g.mode !== 'mine' || !g.mn) return;
+      const mn = g.mn;
+      if (mn.phase !== 'place' || (att.role !== 1 && att.role !== 2) || mn.subm[att.role]) return;
+      if (!Array.isArray(m.cells) || m.cells.length !== M_MINES) return;
+      const set = new Set();
+      for (const c of m.cells) { const i = c | 0;
+        if (i < 0 || i >= MCELLS || M_FORBID.has(i) || set.has(i)) return; set.add(i); }
+      mn.mines[att.role] = [...set]; mn.subm[att.role] = true;
+      mn.orig[att.role] = [...set];               // untouched snapshot for the end-of-game full reveal
+      if (mn.subm[1] && mn.subm[2]) {             // both in -> announce the overlap count, draw first player
+        mn.minedCells = new Set([...mn.mines[1], ...mn.mines[2]]).size;
+        mn.turn = Math.random() < 0.5 ? 1 : 2;
+        mn.phase = 'move';
+        await this.save();
+        this.mineStateAll(g);
+        const ov = M_MINES * 2 - mn.minedCells;
+        this.bcast({ t: 'sys', text: `💣 배치 완료 — 지뢰가 묻힌 칸은 ${mn.minedCells}개${ov ? ` (겹친 칸 ${ov}개!)` : ''}` });
+        this.bcast({ t: 'sys', text: `🎲 선공: ${g.seats[mn.turn] ? g.seats[mn.turn].name : '?'} — 이제 자기 지뢰는 기억에만 있습니다` });
+      } else {
+        await this.save();
+        this.bcast({ t: 'msub', side: att.role });
+        this.bcast({ t: 'sys', text: `${att.name}님 지뢰 배치 완료 — 상대를 기다립니다` });
+      }
+      return;
+    }
+    if (m.t === 'mopt') {                         // 암기(원작) vs 지뢰표시(쉬움) — place phase only, room-wide
+      if (g.mode !== 'mine' || !g.mn || g.mn.phase !== 'place') return;
+      if (g.mn.subm[1] || g.mn.subm[2]) return;   // locked once anyone committed a placement under these rules
+      if (att.role !== 1 && att.role !== 2) return;
+      const v = !!m.v;
+      if (g.mn.reveal === v) return;
+      g.mn.reveal = v;
+      await this.save();
+      this.bcast({ t: 'mopt', v: v ? 1 : 0 });
+      this.bcast({ t: 'sys', text: `${att.name}님이 ${v ? '👁 지뢰 표시 (쉬움)' : '🧠 암기 모드 (원작)'}로 설정` });
+      return;
+    }
+    if (m.t === 'mmove') {                        // move to one of the 8 neighbours
+      if (g.mode !== 'mine' || !g.mn) return;
+      const mn = g.mn;
+      if (mn.phase !== 'move' || mn.winner) return;
+      if (!g.seats[1] || !g.seats[2]) return;
+      if (att.role !== mn.turn || !g.seats[mn.turn] || g.seats[mn.turn].token !== att.token) return;
+      const i = m.i | 0, side = mn.turn, other = side === 1 ? 2 : 1;
+      if (i < 0 || i >= MCELLS || i === mn.pos[other] || !mAdj(mn.pos[side]).includes(i)) return;
+      mn.moves++; mn.pos[side] = i;
+      let boom = 0, gain = 0, tre = 0;
+      const k1 = mn.mines[1].indexOf(i), k2 = mn.mines[2].indexOf(i);
+      if (k1 >= 0 || k2 >= 0) {                   // stepped on a mine: -5, forced back to your start area
+        boom = (k1 >= 0 ? 1 : 0) + (k2 >= 0 ? 1 : 0);
+        if (k1 >= 0) mn.mines[1].splice(k1, 1);
+        if (k2 >= 0) mn.mines[2].splice(k2, 1);   // overlapped mines die together
+        mn.score[side] -= 5;
+        if (!mn.boom.includes(i)) mn.boom.push(i);
+        mn.phase = 'respawn';                     // turn stays with the victim until they pick a spot
+      } else if (mn.treas.includes(i)) {          // treasure: fixed score by pickup order, 3rd one ends it
+        tre = M_TSCORE[mn.tCount]; mn.tCount++;
+        mn.treas = mn.treas.filter(t => t !== i);
+        mn.score[side] += tre;
+        mn.used.push({ i, v: tre, s: side, tre: 1 });
+        if (mn.tCount >= 3) mn.phase = 'over';
+        else mn.turn = other;
+      } else {                                    // safe cell: adjacent-mine count, each cell pays once
+        if (!mn.used.some(u => u.i === i)) {
+          for (const n of mAdj(i)) {
+            if (mn.mines[1].includes(n)) gain++;
+            if (mn.mines[2].includes(n)) gain++; }
+          mn.score[side] += gain;
+          mn.used.push({ i, v: gain, s: side });
+        }
+        mn.turn = other;
+      }
+      if (mn.phase !== 'over' && mn.moves >= M_MAXMV) mn.phase = 'over';   // stall guard
+      if (mn.phase === 'over') {
+        mn.winner = mn.score[1] === mn.score[2] ? 3 : (mn.score[1] > mn.score[2] ? 1 : 2);
+        if (mn.winner !== 3) this.addWin(g, mn.winner);
+      }
+      await this.save();
+      this.bcast({ t: 'mmove', side, to: i, boom, gain, tre,
+                   score: { 1: mn.score[1], 2: mn.score[2] }, turn: mn.turn, phase: mn.phase,
+                   winner: mn.winner, tCount: mn.tCount, moves: mn.moves,
+                   left: mn.mines[1].length + mn.mines[2].length,
+                   all: mn.phase === 'over' ? (mn.orig || mn.mines) : null,
+                   choices: mn.phase === 'respawn' ? this.mineChoices(g) : null });
+      if (mn.winner) {
+        const wn = mn.winner === 3 ? null : (g.seats[mn.winner] ? g.seats[mn.winner].name : '?');
+        this.bcast({ t: 'sys', text: mn.winner === 3
+          ? `게임 종료 — ${mn.score[1]}:${mn.score[2]} 무승부!`
+          : `🏆 게임 종료 — ${wn} 승리! (${mn.score[1]}:${mn.score[2]})` });
+      }
+      return;
+    }
+    if (m.t === 'mre') {                          // respawn: pick one of the cells around your start
+      if (g.mode !== 'mine' || !g.mn) return;
+      const mn = g.mn;
+      if (mn.phase !== 'respawn') return;
+      if (att.role !== mn.turn || !g.seats[mn.turn] || g.seats[mn.turn].token !== att.token) return;
+      const i = m.i | 0;
+      if (!this.mineChoices(g).includes(i)) return;
+      mn.pos[mn.turn] = i;                        // relocation pays nothing
+      mn.phase = 'move'; mn.turn = mn.turn === 1 ? 2 : 1;
+      await this.save();
+      this.bcast({ t: 'mre', side: att.role, to: i, turn: mn.turn });
+      return;
+    }
+
     if (m.t === 'move') {
       if (g.mode !== 'omok') return;
       const i = m.i | 0;
@@ -645,11 +808,21 @@ export class GameRoom {
         this.bcast({ t: 'sys', text: `🏳 ${att.name}님이 기권 — ${other === 1 ? '흑' : '백'} 승리!` });
         return;
       }
+      if (g.mode === 'mine') {
+        const mn = g.mn;
+        if (!mn || mn.winner || !g.seats[1] || !g.seats[2]) return;
+        mn.winner = other; mn.phase = 'over';
+        this.addWin(g, other);
+        await this.save();
+        this.mineStateAll(g);                    // over-state carries the full minefield reveal
+        this.bcast({ t: 'sys', text: `🏳 ${att.name}님이 기권 — ${g.seats[other] ? g.seats[other].name : '상대'} 승리!` });
+        return;
+      }
       return;
     }
     if (m.t === 'switch') {                      // change the room's game — only between rounds
       const target = String(m.mode || '');
-      if (!['omok', 'draw', 'alka', 'beat', 'tet'].includes(target)) return;
+      if (!['omok', 'draw', 'alka', 'beat', 'tet', 'mine'].includes(target)) return;
       if (!att.token || !att.name) return;
       if (target === g.mode) return;
       const active =
@@ -657,7 +830,9 @@ export class GameRoom {
         g.mode === 'alka' ? (g.a && g.a.moves > 0 && !g.a.winner) :
         g.mode === 'draw' ? (g.d && (g.d.phase === 'drawing' || g.d.phase === 'choosing')) :
         g.mode === 'beat' ? (g.b && g.b.phase === 'playing') :
-        g.mode === 'tet'  ? (g.tt && g.tt.phase === 'playing') : false;
+        g.mode === 'tet'  ? (g.tt && g.tt.phase === 'playing') :
+        g.mode === 'mine' ? (g.mn && !g.mn.winner &&
+          (g.mn.phase === 'move' || g.mn.phase === 'respawn' || g.mn.subm[1] || g.mn.subm[2])) : false;
       if (active) { try { ws.send(JSON.stringify({ t: 'sys', text: '라운드가 끝난 뒤에 게임을 바꿀 수 있어요' })); } catch {} return; }
       // participants in stable order: current seat holders first, then everyone connected
       const parts = []; const seen = new Set();
@@ -675,22 +850,33 @@ export class GameRoom {
       else if (target === 'tet') { ng.tt = emptyTet();
         for (const p of alive) { ng.tt.players[p.token] = { name: p.name, online: true, playing: false, finished: false, score: 0, lines: 0 }; ng.tt.order.push(p.token); } }
       else if (target === 'alka') ng.a = emptyAlka();
-      if (target === 'omok' || target === 'alka') {
+      else if (target === 'mine') ng.mn = emptyMine();
+      const twoSeat = target === 'omok' || target === 'alka' || target === 'mine';
+      if (twoSeat) {
         if (alive[0]) ng.seats[1] = { token: alive[0].token, name: alive[0].name, online: true };
         if (alive[1]) ng.seats[2] = { token: alive[1].token, name: alive[1].name, online: true };
       }
       this.game = ng;
       await this.save();
-      const LABEL = { omok: '⚫ 오목', draw: '🎨 그림 맞추기', alka: '🥌 알까기', beat: '🎵 리듬', tet: '🧱 테트리스' };
+      const LABEL = { omok: '⚫ 오목', draw: '🎨 그림 맞추기', alka: '🥌 알까기', beat: '🎵 리듬', tet: '🧱 테트리스', mine: '💣 망각의 지뢰' };
       for (const w of this.ctx.getWebSockets()) {
         const a = w.deserializeAttachment() || {}; let role = 0;
-        if (target === 'omok' || target === 'alka')
+        if (twoSeat)
           for (const s of [1, 2]) if (ng.seats[s] && ng.seats[s].token === a.token) role = s;
         w.serializeAttachment({ ...a, role, mate: false });
         try { w.send(JSON.stringify(this.stateFor(ng, role, a.token))); } catch {}
       }
       this.bcast({ t: 'sys', text: `${att.name}님이 게임을 ${LABEL[target]}(으)로 바꿨어요!` });
-      if (target === 'omok' || target === 'alka') this.bcast(this.roster(ng));
+      if (twoSeat) this.bcast(this.roster(ng));
+      return;
+    }
+    if (m.t === 'restart' && g.mode === 'mine') {  // mine rematch: bury again, first player re-drawn
+      if (att.role !== 1 && att.role !== 2) return;
+      if (!g.mn || !g.mn.winner) return;
+      g.mn = { ...emptyMine(), round: (g.mn.round || 1) + 1, reveal: !!g.mn.reveal };  // difficulty survives
+      await this.save();
+      this.mineStateAll(g);
+      this.bcast({ t: 'sys', text: `${att.name}님이 새 판을 시작했어요 — 지뢰를 다시 심으세요!` });
       return;
     }
     if (m.t === 'restart' && g.mode === 'alka') {  // alka rematch: reset stones, swap who starts
