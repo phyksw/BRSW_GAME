@@ -130,7 +130,7 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
 </head>
 <body>
 <div class="wrap">
-  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.22</span>
+  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.23</span>
     <button type="button" id="btnMute" class="mutebtn" title="효과음 켜기/끄기">🔊</button></header>
 
   <!-- lobby -->
@@ -980,14 +980,39 @@ function mineRndFill(){ if(!MN||MN.subm[myRole]||MN.pend)return;
   const pool=[]; for(let i=0;i<M_CELLS;i++) if(!M_BAN.has(i)&&!MN.sel.includes(i)) pool.push(i);
   while(MN.sel.length<M_N&&pool.length) MN.sel.push(pool.splice((Math.random()*pool.length)|0,1)[0]);
   sfxPlace(); mui(); mrender(); }
-function mnExp(s){ if(MN.winner) return MN.winner===3?EXP.calm:(MN.winner===s?EXP.love:EXP.cry);
-  if(MN.phase==='place') return EXP.neutral;
-  if(MN.phase==='respawn'&&MN.turn===s) return EXP.dizzy;
+function mnBadge(s){ if(MN.winner===3) return '🤝';
+  if(MN.winner===s) return '👑';
+  if(MN.winner&&MN.winner!==s) return '😵';
+  if(MN.phase==='respawn'&&MN.turn===s) return '💫';
   const f=MN.fx.find(f2=>f2.i===MN.pos[s]);
-  if(f&&f.txt==='-5') return EXP.dizzy;
-  if(f&&f.txt[0]==='+') return EXP.wow;
-  if(MN.phase==='move'&&MN.turn===s) return EXP.grin;
-  return EXP.sleep; }
+  if(f&&f.txt==='-5') return '💫';
+  if(f&&f.txt[0]==='+') return '✨';
+  return null; }
+function minePiece(x,y,r,side){                 // mine 전용 말: 광택 보드게임 폰 (P1 시안 / P2 앰버)
+  const g=cx.createLinearGradient(x,y-r,x,y+r);
+  if(side===1){ g.addColorStop(0,'#8ceeff'); g.addColorStop(.55,'#2fb9e6'); g.addColorStop(1,'#0b6f96'); }
+  else{ g.addColorStop(0,'#ffdf9e'); g.addColorStop(.55,'#f5a83a'); g.addColorStop(1,'#b06a0e'); }
+  const edge=side===1?'rgba(6,45,61,.9)':'rgba(74,44,6,.9)';
+  cx.save();
+  cx.beginPath(); cx.ellipse(x,y+r*0.66,r*0.72,r*0.26,0,0,7);       // ground shadow
+  cx.fillStyle='rgba(0,0,0,.38)'; cx.fill();
+  cx.fillStyle=g; cx.strokeStyle=edge; cx.lineWidth=1.4;
+  cx.beginPath(); cx.ellipse(x,y+r*0.5,r*0.62,r*0.27,0,0,7);        // base disc
+  cx.fill(); cx.stroke();
+  cx.beginPath();                                                    // waisted cone body
+  cx.moveTo(x-r*0.48,y+r*0.46);
+  cx.quadraticCurveTo(x-r*0.13,y+r*0.06,x-r*0.17,y-r*0.24);
+  cx.lineTo(x+r*0.17,y-r*0.24);
+  cx.quadraticCurveTo(x+r*0.13,y+r*0.06,x+r*0.48,y+r*0.46);
+  cx.closePath(); cx.fill(); cx.stroke();
+  cx.beginPath(); cx.ellipse(x,y-r*0.24,r*0.26,r*0.10,0,0,7);       // collar
+  cx.fill(); cx.stroke();
+  cx.beginPath(); cx.arc(x,y-r*0.52,r*0.31,0,7);                     // head
+  cx.fill(); cx.stroke();
+  cx.beginPath(); cx.arc(x-r*0.10,y-r*0.62,r*0.10,0,7);              // gloss
+  cx.fillStyle='rgba(255,255,255,.75)'; cx.fill();
+  cx.restore();
+}
 function mrender(){ if(MODE!=='mine'||!MN)return;
   cx.setTransform(DPR,0,0,DPR,0,0);
   cx.fillStyle='#0c1120'; cx.fillRect(0,0,CSS,CSS);
@@ -1022,6 +1047,10 @@ function mrender(){ if(MODE!=='mine'||!MN)return;
   for(let k=0;k<=M_SZ;k++){
     cx.beginPath(); cx.moveTo(M_PAD+k*M_CW,M_TOP); cx.lineTo(M_PAD+k*M_CW,M_TOP+M_SZ*M_CW); cx.stroke();
     cx.beginPath(); cx.moveTo(M_PAD,M_TOP+k*M_CW); cx.lineTo(M_PAD+M_SZ*M_CW,M_TOP+k*M_CW); cx.stroke(); }
+  /* per-cell serial (a1~k11) like the show's 게임판 — 좌표로 외운다 */
+  cx.fillStyle=placing?'rgba(159,178,207,.42)':'rgba(159,178,207,.28)';
+  cx.font='700 8px Pretendard,sans-serif'; cx.textAlign='center';
+  for(let i=0;i<M_CELLS;i++) cx.fillText('abcdefghijk'[(i/M_SZ)|0]+(i%M_SZ+1), mcx(i)+M_CW/2, mcy(i)+10);
   /* start cells */
   for(const s of [1,2]){ const i=M_ST[s],x=mcx(i),y=mcy(i);
     cx.strokeStyle=M_ACC[s]; cx.lineWidth=1.6; cx.setLineDash([4,3]);
@@ -1073,17 +1102,28 @@ function mrender(){ if(MODE!=='mine'||!MN)return;
   if(placing&&me2&&!MN.subm[myRole]&&MN.hov>=0&&!M_BAN.has(MN.hov)){
     cx.strokeStyle='rgba(255,107,94,.85)'; cx.lineWidth=2;
     cx.strokeRect(mcx(MN.hov)+2,mcy(MN.hov)+2,M_CW-4,M_CW-4); }
-  /* pieces: tigers with an accent ring */
-  const pr=M_CW*0.40;
+  /* pieces: game pawns with an accent ring */
+  const pr=M_CW*0.42;
   for(const s of [1,2]){ const x=mcx(MN.pos[s])+M_CW/2,y=mcy(MN.pos[s])+M_CW/2;
-    cx.strokeStyle=M_ACC[s]; cx.lineWidth=2.5;
-    cx.beginPath(); cx.arc(x,y+2,pr+3,0,7); cx.stroke();
-    faceStone(x,y,pr,s,mnExp(s)); }
+    cx.strokeStyle=M_ACC[s]; cx.lineWidth=2.2;
+    cx.beginPath(); cx.arc(x,y+2,pr+2,0,7); cx.stroke();
+    minePiece(x,y,pr,s); }
   /* score popups */
   cx.textBaseline='alphabetic';
   for(const f of MN.fx){ const age=performance.now()-f.t0, a=Math.max(0,1-age/1100);
     cx.globalAlpha=a; cx.fillStyle=f.col; cx.font='800 20px Pretendard,sans-serif'; cx.textAlign='center';
     cx.fillText(f.txt,mcx(f.i)+M_CW/2,mcy(f.i)+10-age*0.022); cx.globalAlpha=1; }
+  /* state badges LAST: the ✨/💫 badges share the popup's spot, so they must draw over it.
+     Emoji inherit fillStyle's alpha — leave it opaque or they vanish. Disc = reads on any bg. */
+  cx.textBaseline='middle'; cx.textAlign='center'; cx.font='12px sans-serif';
+  for(const s of [1,2]){ const bd=mnBadge(s); if(!bd)continue;
+    const x=mcx(MN.pos[s])+M_CW/2+pr*0.62, y=mcy(MN.pos[s])+M_CW/2-pr*0.80;
+    cx.globalAlpha=1;
+    cx.beginPath(); cx.arc(x,y,9,0,7);
+    cx.fillStyle='rgba(8,14,28,.82)'; cx.fill();
+    cx.strokeStyle=M_ACC[s]; cx.lineWidth=1; cx.stroke();
+    cx.fillStyle='#fff'; cx.fillText(bd,x,y); }
+  cx.textBaseline='alphabetic';   // restore: cx is shared across modes + this fn's own HUD/axis/serial next frame
   /* end banner */
   if(MN.winner){ const cy2=M_TOP+M_SZ*M_CW/2;
     cx.fillStyle='rgba(5,8,16,.5)'; cx.fillRect(0,cy2-44,CSS,88);
