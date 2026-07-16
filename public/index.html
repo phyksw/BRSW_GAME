@@ -91,11 +91,14 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
 .boardcard{display:flex;flex-direction:column;align-items:center;gap:12px}
 #board{border-radius:14px;box-shadow:0 14px 34px -16px rgba(35,48,74,.4);cursor:pointer;touch-action:none;
   -webkit-user-select:none;user-select:none;max-width:100%;height:auto}
+/* 두 손가락 핀치로 보드 확대 허용 (한 손가락 조작은 게임이 그대로 받음).
+   pinch-zoom 미지원 브라우저에서 선언이 무효→auto로 떨어지면 드래그가 스크롤로 먹히므로 @supports 가드 필수 */
+@supports(touch-action:pinch-zoom){#board{touch-action:pinch-zoom}}
 .topbar{display:flex;align-items:center;gap:10px;width:100%;flex-wrap:wrap}
 .codechip{display:flex;align-items:center;gap:8px;background:#fff;border:1.5px solid var(--line);
   border-radius:999px;padding:7px 14px;font-size:13px;font-weight:800;letter-spacing:.14em;color:var(--cyan)}
 .codechip small{letter-spacing:0;font-weight:700;color:var(--mute)}
-#turnmsg{margin-left:auto;font-size:13px;font-weight:700;color:var(--soft)}
+#turnmsg{margin-left:auto;font-size:15px;font-weight:800;color:var(--soft)}
 #turnmsg.me{color:var(--ok)}
 #turnmsg.win{color:var(--coral)}
 .side{display:flex;flex-direction:column;gap:12px;min-height:0}
@@ -105,9 +108,17 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
   box-shadow:0 2px 4px rgba(35,48,74,.2)}
 .pl .stone.b{background:radial-gradient(circle at 34% 30%,#5a5a66,#0a0a10)}
 .pl .stone.w{background:radial-gradient(circle at 34% 30%,#ffffff,#c9ccd6)}
+/* mine 모드: 패널 돌을 캔버스 폰과 같은 시안/앰버로 — 누가 누군지 즉시 매칭 */
+.pl .stone.p1c{background:radial-gradient(circle at 34% 30%,#8ceeff,#0b6f96);border-color:rgba(53,220,255,.5)}
+.pl .stone.p2c{background:radial-gradient(circle at 34% 30%,#ffdf9e,#b06a0e);border-color:rgba(255,180,84,.55)}
 .pl .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pl .st{margin-left:auto;font-size:10.5px;color:var(--mute)}
 .pl.turn{border-color:rgba(20,165,111,.55);background:rgba(20,165,111,.05)}
+/* mine 모드: 차례인 쪽 패널이 자기 색으로 숨쉬듯 펄스 — 누구 턴인지 한눈에 */
+body.m-mine #pl1.turn{border-color:rgba(53,220,255,.8);background:rgba(53,220,255,.07);animation:plPulse1 1.3s ease-in-out infinite}
+body.m-mine #pl2.turn{border-color:rgba(255,180,84,.85);background:rgba(255,180,84,.08);animation:plPulse2 1.3s ease-in-out infinite}
+@keyframes plPulse1{0%,100%{box-shadow:0 0 0 0 rgba(53,220,255,.45)}50%{box-shadow:0 0 10px 4px rgba(53,220,255,.14)}}
+@keyframes plPulse2{0%,100%{box-shadow:0 0 0 0 rgba(255,180,84,.5)}50%{box-shadow:0 0 10px 4px rgba(255,180,84,.16)}}
 .pl.me .nm::after{content:" (나)";color:var(--cyan);font-size:11px}
 .pl .pj{flex:0 0 auto;font-family:var(--sans);font-size:10.5px;font-weight:700;padding:4px 9px;
   border-radius:8px;background:#fff;border:1px solid rgba(18,181,166,.45);color:var(--cyan);cursor:pointer}
@@ -130,7 +141,7 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
 </head>
 <body>
 <div class="wrap">
-  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.24</span>
+  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.25</span>
     <button type="button" id="btnMute" class="mutebtn" title="효과음 켜기/끄기">🔊</button></header>
 
   <!-- lobby -->
@@ -591,9 +602,13 @@ function cellAt(e){
   if(Math.abs(mx-(PAD+gx*step))>step*.45||Math.abs(my-(PAD+gy*step))>step*.45) return -1;
   return gy*SIZE+gx;
 }
-/* bulletproof mobile: block scroll/zoom takeover on the game canvas (drawing + slingshot) */
-cv.addEventListener('touchstart',e=>{ e.preventDefault(); },{passive:false});
-cv.addEventListener('touchmove', e=>{ e.preventDefault(); },{passive:false});
+/* bulletproof mobile, 핀치줌 허용판: touchstart를 preventDefault하면 touch-action과 무관하게
+   그 제스처의 핀치줌까지 거부되므로 절대 막지 않는다. 스크롤 차단은 touch-action CSS가 담당하고,
+   한 손가락 touchmove만 preventDefault(iOS 그리기/조준 보호). touchend 취소로 합성 마우스 이벤트
+   (탭 후 유령 mousemove/click) 억제, contextmenu 취소로 롱프레스 메뉴 억제. 두 손가락 = 브라우저 핀치줌. */
+cv.addEventListener('touchmove', e=>{ if(e.touches.length===1) e.preventDefault(); },{passive:false});
+cv.addEventListener('touchend', e=>{ if(e.touches.length===0) e.preventDefault(); },{passive:false});
+cv.addEventListener('contextmenu',e=>{ e.preventDefault(); });
 cv.addEventListener('mousemove',e=>{ if(MODE!=='omok')return; const i=cellAt(e); if(i!==hover){ hover=i; draw(); } });
 cv.addEventListener('mouseleave',()=>{ if(MODE!=='omok')return; hover=-1; draw(); });
 /* touch aiming (WYSIWYG): the ghost starts exactly UNDER the finger, then glides up
@@ -636,6 +651,9 @@ function setMode(mo){ MODE=mo;
   const two = mo==='omok'||mo==='alka'||mo==='mine';    // 2-seat games use the pl1/pl2 panels
   const multi = mo==='draw'||mo==='beat'||mo==='tet';   // everyone-plays games use scores + wordbar
   $('pl1').classList.toggle('hidden',!two); $('pl2').classList.toggle('hidden',!two);
+  document.body.classList.toggle('m-mine', mo==='mine');           // mine 전용 턴 펄스 CSS 게이트
+  $('pl1').querySelector('.stone').className = mo==='mine'?'stone p1c':'stone b';
+  $('pl2').querySelector('.stone').className = mo==='mine'?'stone p2c':'stone w';
   $('scores').classList.toggle('hidden',!multi); $('wordbar').classList.toggle('hidden',!multi);
   $('chat').placeholder=mo==='draw'?'정답 입력…':'채팅…';
   if(mo!=='omok'){ oDrag=null; stopOAnim(); hover=-1; }   // a mid-touch mode switch must not leak the aim loop
@@ -916,6 +934,7 @@ const M_BAN=(()=>{ const s=new Set(M_TR);              // no-mine zone: treasure
       if(nx>=0&&nx<M_SZ&&ny>=0&&ny<M_SZ)s.add(ny*M_SZ+nx); } }
   return s; })();
 const M_PAD=30, M_TOP=56, M_CW=(600-M_PAD*2)/M_SZ;     // 11x11 cells under a HUD strip
+let mnPinged=false;   // 햅틱 rising-edge 래치 — MN 밖에 둬야 재접속(mstate→initMine)에도 재발화 안 함
 function initMine(){ MN={phase:'place',round:1,turn:0,winner:0,pos:{1:M_ST[1],2:M_ST[2]},
   score:{1:0,2:0},used:[],boom:[],treas:M_TR.slice(),tCount:0,moves:0,minedCells:0,left:0,
   reveal:false,subm:{1:false,2:false},pend:false,mines:[],sel:[],all:null,choices:null,hov:-1,fx:[]}; }
@@ -956,6 +975,10 @@ function mui(){ if(MODE!=='mine'||!MN)return;
     else t.textContent=mnName(MN.turn)+' 복귀할 곳 고르는 중…'; }
   else if(myRole===MN.turn){ t.textContent='● 내 차례 — 인접한 칸으로 이동'; t.className='me'; }
   else t.textContent=mnName(MN.turn)+' 차례'+(myRole?'':' (관전)');
+  /* 내 차례가 새로 시작되는 순간 햅틱 — 폰만 보다가 놓치는 걸 방지 */
+  const myGo=!MN.winner&&MN.phase!=='place'&&myRole>0&&myRole===MN.turn&&!!(seats&&seats[1]&&seats[2]);
+  if(myGo&&!mnPinged&&navigator.vibrate) navigator.vibrate(60);
+  mnPinged=myGo;
 }
 function buildMineBar(){ const el=$('mineBar'); el.innerHTML='';
   const done=!!MN.subm[myRole]||MN.pend;              // pend: mset sent, ack not yet back — freeze edits
@@ -1021,19 +1044,21 @@ function mrender(){ if(MODE!=='mine'||!MN)return;
   const hy=30;
   for(const s of [1,2]){ const p=seats&&seats[s];
     cx.textAlign=s===1?'left':'right'; const x=s===1?M_PAD:CSS-M_PAD;
-    cx.fillStyle=M_ACC[s]; cx.font='800 14px Pretendard,sans-serif';
+    cx.fillStyle=M_ACC[s]; cx.font='800 16px Pretendard,sans-serif';
     cx.fillText((p?p.name:'—').slice(0,8),x,hy-11);
     cx.fillStyle='#eef3fb'; cx.font='800 23px Pretendard,sans-serif';
     cx.fillText(String(MN.score[s]|0),x,hy+13);
-    if(!MN.winner&&!placing&&MN.turn===s){ cx.fillStyle=M_ACC[s];
-      cx.font='800 10px Pretendard,sans-serif'; cx.fillText(s===1?'▶ 차례':'차례 ◀',x,hy+26); } }
-  cx.textAlign='center'; cx.fillStyle='rgba(159,178,207,.85)'; cx.font='700 12px Pretendard,sans-serif';
+    if(!MN.winner&&!placing&&MN.turn===s){                       // 점수 옆에 배치 — 축 번호(1/11)와 안 겹침
+      const sw=cx.measureText(String(MN.score[s]|0)).width;      // 23px 점수 폰트가 아직 활성인 시점에 측정
+      cx.fillStyle=M_ACC[s]; cx.font='800 12px Pretendard,sans-serif';
+      cx.fillText(s===1?'◀ 차례':'차례 ▶',x+(s===1?sw+8:-sw-8),hy+13); } }
+  cx.textAlign='center'; cx.fillStyle='rgba(159,178,207,.85)'; cx.font='700 14px Pretendard,sans-serif';
   if(placing) cx.fillText(`💣 ${M_N}개 배치 — 붉은 구역(출발지 주변·보물칸)은 금지`,CSS/2,hy-4);
   else cx.fillText(`💣 지뢰 ${MN.left} (겹침 ${Math.max(0,M_N*2-MN.minedCells)}) · 💎 다음 +${[10,15,20][MN.tCount]||'—'} · 턴 ${MN.moves}${MN.moves>=M_MAX-30?'/'+M_MAX:''}`,CSS/2,hy-4);
-  cx.fillStyle='rgba(159,178,207,.45)'; cx.font='700 10.5px Pretendard,sans-serif';
-  cx.fillText(placing?'상대도 같은 칸에 심을 수 있어요 — 겹치면 한 번에 터집니다':'득점 = 도착한 칸 주변 8칸의 지뢰 개수 (칸마다 1회)',CSS/2,hy+12);
+  cx.fillStyle='rgba(159,178,207,.5)'; cx.font='700 12.5px Pretendard,sans-serif';
+  cx.fillText(placing?'상대도 같은 칸에 심을 수 있어요 — 겹치면 한 번에 터집니다':'득점 = 도착한 칸 주변 8칸의 지뢰 개수 (칸마다 1회)',CSS/2,hy+13);
   /* coordinates like the show (a-k / 1-11) */
-  cx.fillStyle='rgba(159,178,207,.4)'; cx.font='700 9px Pretendard,sans-serif';
+  cx.fillStyle='rgba(159,178,207,.5)'; cx.font='700 11px Pretendard,sans-serif';
   for(let k=0;k<M_SZ;k++){
     cx.textAlign='center'; cx.fillText(String(k+1),M_PAD+k*M_CW+M_CW/2,M_TOP-3);
     cx.textAlign='right'; cx.fillText('abcdefghijk'[k],M_PAD-5,M_TOP+k*M_CW+M_CW/2+3); }
@@ -1075,16 +1100,24 @@ function mrender(){ if(MODE!=='mine'||!MN)return;
   cx.textAlign='center';
   for(const b of MN.boom){ cx.globalAlpha=.6; cx.font='12px sans-serif';
     cx.fillText('💥',mcx(b)+M_CW-10,mcy(b)+11); cx.globalAlpha=1; }
-  /* my mines (placement always; in-game only in 쉬움 mode) + final reveal */
+  /* my mines (placement always; in-game only in 쉬움 mode) + final reveal
+     💣 이모지는 어두워서 다크 보드에 묻힘 → 밝은 백킹 디스크 + 웜 글로우를 깔아준다 */
+  const bomb=(x,y,px)=>{ cx.save();
+    cx.beginPath(); cx.arc(x,y,px*0.58,0,7);       // 0.58: 셀 상단 좌표 라벨을 침범하지 않는 최대
+    cx.fillStyle='rgba(255,208,120,.30)'; cx.fill();
+    cx.strokeStyle='rgba(255,208,120,.55)'; cx.lineWidth=1.3; cx.stroke();
+    cx.shadowColor='#ffcb6b'; cx.shadowBlur=12;
+    cx.fillStyle='#000';                            // 이모지는 fillStyle의 alpha를 물려받음 — 불투명 필수
+    cx.font=px+'px sans-serif'; cx.textAlign='center'; cx.fillText('💣',x,y+1);
+    cx.restore(); };
   const showMines = placing ? (me2?MN.sel:[]) : (MN.reveal&&me2?MN.mines:[]);
   cx.textAlign='center';
-  for(const c of showMines){ cx.font=placing?'21px sans-serif':'14px sans-serif';
-    cx.fillText('💣',mcx(c)+M_CW/2,mcy(c)+M_CW/2+2); }
+  for(const c of showMines) bomb(mcx(c)+M_CW/2, mcy(c)+M_CW/2+1, placing?24:17);
   if(MN.winner&&MN.all){ for(const s of [1,2]) for(const c of MN.all[s]||[]){
     const x=mcx(c)+M_CW/2,y=mcy(c)+M_CW/2;
     cx.strokeStyle=M_ACC[s]; cx.lineWidth=1.6;
     cx.beginPath(); cx.arc(x,y,M_CW*(s===1?0.30:0.38),0,7); cx.stroke();
-    cx.font='14px sans-serif'; cx.globalAlpha=.85; cx.fillText('💣',x,y+1); cx.globalAlpha=1; } }
+    bomb(x,y,16); } }
   /* legal moves / respawn choices / placement hover */
   const other=myRole===1?2:1;
   const myMove=!MN.winner&&MN.phase==='move'&&me2&&myRole===MN.turn&&!!(seats&&seats[1]&&seats[2]);
@@ -1102,12 +1135,21 @@ function mrender(){ if(MODE!=='mine'||!MN)return;
   if(placing&&me2&&!MN.subm[myRole]&&MN.hov>=0&&!M_BAN.has(MN.hov)){
     cx.strokeStyle='rgba(255,107,94,.85)'; cx.lineWidth=2;
     cx.strokeRect(mcx(MN.hov)+2,mcy(MN.hov)+2,M_CW-4,M_CW-4); }
-  /* pieces: game pawns with an accent ring */
-  const pr=M_CW*0.42;
+  /* pieces: game pawns with an accent ring — 차례인 쪽만 굵은 글로우 링 + ▼ 마커 */
+  const pr=M_CW*0.42, act=(!MN.winner&&MN.phase==='move'&&!!(seats&&seats[1]&&seats[2]))?MN.turn:0;
   for(const s of [1,2]){ const x=mcx(MN.pos[s])+M_CW/2,y=mcy(MN.pos[s])+M_CW/2;
-    cx.strokeStyle=M_ACC[s]; cx.lineWidth=2.2;
+    cx.save();
+    if(s===act){ cx.shadowColor=M_ACC[s]; cx.shadowBlur=15; cx.lineWidth=3.4; }
+    else{ cx.lineWidth=1.6; cx.globalAlpha=.55; }
+    cx.strokeStyle=M_ACC[s];
     cx.beginPath(); cx.arc(x,y+2,pr+2,0,7); cx.stroke();
-    minePiece(x,y,pr,s); }
+    cx.restore();
+    minePiece(x,y,pr,s);
+    if(s===act){ cx.fillStyle=M_ACC[s]; cx.beginPath();
+      if(((MN.pos[s]/M_SZ)|0)===0){                 // 최상단 행: 위로 그리면 축 라벨을 덮음 → 아래에서 ▲
+        cx.moveTo(x,y+pr+4); cx.lineTo(x-5,y+pr+12); cx.lineTo(x+5,y+pr+12); }
+      else{ cx.moveTo(x,y-pr-4); cx.lineTo(x-5,y-pr-12); cx.lineTo(x+5,y-pr-12); }
+      cx.closePath(); cx.fill(); } }
   /* score popups */
   cx.textBaseline='alphabetic';
   for(const f of MN.fx){ const age=performance.now()-f.t0, a=Math.max(0,1-age/1100);
