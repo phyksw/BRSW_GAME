@@ -130,7 +130,7 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
 </head>
 <body>
 <div class="wrap">
-  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.23</span>
+  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.24</span>
     <button type="button" id="btnMute" class="mutebtn" title="효과음 켜기/끄기">🔊</button></header>
 
   <!-- lobby -->
@@ -1047,10 +1047,10 @@ function mrender(){ if(MODE!=='mine'||!MN)return;
   for(let k=0;k<=M_SZ;k++){
     cx.beginPath(); cx.moveTo(M_PAD+k*M_CW,M_TOP); cx.lineTo(M_PAD+k*M_CW,M_TOP+M_SZ*M_CW); cx.stroke();
     cx.beginPath(); cx.moveTo(M_PAD,M_TOP+k*M_CW); cx.lineTo(M_PAD+M_SZ*M_CW,M_TOP+k*M_CW); cx.stroke(); }
-  /* per-cell serial (a1~k11) like the show's 게임판 — 좌표로 외운다 */
-  cx.fillStyle=placing?'rgba(159,178,207,.42)':'rgba(159,178,207,.28)';
-  cx.font='700 8px Pretendard,sans-serif'; cx.textAlign='center';
-  for(let i=0;i<M_CELLS;i++) cx.fillText('abcdefghijk'[(i/M_SZ)|0]+(i%M_SZ+1), mcx(i)+M_CW/2, mcy(i)+10);
+  /* per-cell serial (a1~k11) like the show's 게임판 — 좌표로 외운다. 모바일(캔버스 ~0.58배)에서도 읽히게 크게 */
+  cx.fillStyle=placing?'rgba(203,216,238,.62)':'rgba(203,216,238,.44)';
+  cx.font='700 12px Pretendard,sans-serif'; cx.textAlign='center';
+  for(let i=0;i<M_CELLS;i++) cx.fillText('abcdefghijk'[(i/M_SZ)|0]+(i%M_SZ+1), mcx(i)+M_CW/2, mcy(i)+12);
   /* start cells */
   for(const s of [1,2]){ const i=M_ST[s],x=mcx(i),y=mcy(i);
     cx.strokeStyle=M_ACC[s]; cx.lineWidth=1.6; cx.setLineDash([4,3]);
