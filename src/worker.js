@@ -328,7 +328,10 @@ export class GameRoom {
     this.rl ||= new WeakMap();
     const now = Date.now(); let rl = this.rl.get(ws);
     if (!rl || now - rl.t > 10000) { rl = { n: 0, t: now }; this.rl.set(ws, rl); }
-    if (++rl.n > 40) return;
+    // 40이던 한도를 160으로: 지뢰처럼 탭 템포가 빠른 게임 + 채팅이 겹치면 사람도 40을 넘겨
+    // 유효한 mmove가 조용히 무시됨 → 유저에겐 "게임이 다운됨"으로 보임 (실측 재현). 16msg/s는 사람 불가능.
+    // stroke는 240Hz 기기에서 ~18.5msg/s까지 정상 발생하므로 별도 상한.
+    if (++rl.n > (m.t === 'stroke' ? 320 : 160)) return;
 
     const g = await this.load();
     const att = ws.deserializeAttachment() || {};

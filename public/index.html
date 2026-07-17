@@ -22,9 +22,9 @@ header .tag{font-size:10px;letter-spacing:.12em;color:var(--cyan);border:1px sol
 .mutebtn:hover{background:var(--card2)}
 .msel{background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:7px 9px;
   font-family:var(--sans);font-size:12px;font-weight:700;color:var(--text);cursor:pointer;outline:none}
-#connOv{position:fixed;inset:0;background:rgba(238,241,246,.72);backdrop-filter:blur(2px);
+#connOv,#bootOv{position:fixed;inset:0;background:rgba(238,241,246,.72);backdrop-filter:blur(2px);
   display:flex;align-items:center;justify-content:center;z-index:50}
-#connOv .box{background:#fff;border:1.5px solid var(--line);border-radius:16px;padding:18px 26px;
+#connOv .box,#bootOv .box{background:#fff;border:1.5px solid var(--line);border-radius:16px;padding:18px 26px;
   font-weight:800;font-size:14px;box-shadow:0 16px 40px -18px rgba(35,48,74,.4)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:20px;
   box-shadow:0 12px 32px -20px rgba(35,48,74,.22)}
@@ -141,7 +141,7 @@ body.m-mine #pl2.turn{border-color:rgba(255,180,84,.85);background:rgba(255,180,
 </head>
 <body>
 <div class="wrap">
-  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.25</span>
+  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.26</span>
     <button type="button" id="btnMute" class="mutebtn" title="효과음 켜기/끄기">🔊</button></header>
 
   <!-- lobby -->
@@ -157,7 +157,7 @@ body.m-mine #pl2.turn{border-color:rgba(255,180,84,.85);background:rgba(255,180,
       <div class="gitem">🗺️ 땅따먹기 <span class="soon">준비중</span></div>
     </div>
     <div class="field"><label>닉네임</label><input type="text" id="nick" maxlength="12" placeholder="예: 김선장"></div>
-    <div class="field"><label>방 코드 (입장할 때만)</label><input type="text" id="code" maxlength="8" placeholder="예: A3K9F" style="text-transform:uppercase"></div>
+    <div class="field"><label>방 코드 (입장할 때만)</label><input type="text" id="code" maxlength="14" placeholder="예: A3K9F" style="text-transform:uppercase"></div>
     <div class="row">
       <button class="btn primary" id="btnNew">+ 새 방 만들기</button>
       <button class="btn tealout" id="btnJoin">방 입장</button>
@@ -166,6 +166,7 @@ body.m-mine #pl2.turn{border-color:rgba(255,180,84,.85);background:rgba(255,180,
   </div>
 
   <div id="connOv" class="hidden"><div class="box">📶 연결이 끊겨 재접속 중…</div></div>
+  <div id="bootOv" class="hidden"><div class="box">🎮 게임 불러오는 중…</div></div>
 
   <!-- game -->
   <div id="game" class="hidden">
@@ -228,7 +229,7 @@ const TOKEN = localStorage.getItem('gtoken');
 /* ---- state ---- */
 let ws=null, room=null, myRole=0, board=new Array(CELLS).fill(0),
     turn=1, winner=0, winLine=null, seats={1:null,2:null}, lastMove=-1, inGame=false,
-    retry=0, reconnT=null, pingT=null;
+    retry=0, reconnT=null, pingT=null, bootWd=null;
 let MODE='omok', selMode='omok', timerIv=null,
     DRAW={phase:'lobby',roundEnd:0,youDrawer:false,word:null,mask:''},
     tool={c:0,w:4},
@@ -243,16 +244,25 @@ const CODE_CHARS='ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const newCode=()=>Array.from({length:5},()=>CODE_CHARS[Math.random()*CODE_CHARS.length|0]).join('');
 function myName(){ const n=$('nick').value.trim().slice(0,12); if(!n){ $('nick').focus(); return null; }
   localStorage.setItem('gname',n); return n; }
+function selectMode(mo){ selMode=mo;                   // selMode와 로비 하이라이트는 항상 함께 변경
+  document.querySelectorAll('#gamesList .gitem').forEach(x=>x.classList.toggle('sel',x.dataset.mode===mo)); }
 document.querySelectorAll('#gamesList button.gitem').forEach(b=>{
-  b.onclick=()=>{ selMode=b.dataset.mode;
-    document.querySelectorAll('#gamesList .gitem').forEach(x=>x.classList.toggle('sel',x===b)); };
+  b.onclick=()=>selectMode(b.dataset.mode);
 });
 $('btnNew').onclick=()=>{ if(!myName())return; enter(newCode()); };
-$('btnJoin').onclick=()=>{ if(!myName())return; const c=$('code').value.trim().toUpperCase();
-  if(!/^[A-Z0-9]{4,8}$/.test(c)){ $('code').focus(); return; } enter(c); };
+$('btnJoin').onclick=()=>{ if(!myName())return;        // 'CODE' 또는 'CODE-mode'(초대링크 꼬리) 모두 허용
+  const [c,mo]=$('code').value.trim().split('-'); const code=(c||'').toUpperCase();
+  if(!/^[A-Z0-9]{4,8}$/.test(code)){ $('code').focus(); return; }
+  if(['omok','draw','alka','beat','tet','mine'].includes((mo||'').toLowerCase())) selectMode(mo.toLowerCase());
+  enter(code); };
 $('code').addEventListener('keydown',e=>{ if(e.key==='Enter') $('btnJoin').click(); });
 
-function enter(code){ room=code; location.hash=code; inGame=true;
+function enter(code){ room=code; inGame=true;
+  /* '#CODE-mode' 링크 진입이면 push 없이 '#CODE'로 정규화 (BACK이 방을 재진입하는 히스토리 오염 방지).
+     로비→방 진입은 기존대로 push — 뒤로가기 = 방 나가기 유지 */
+  const cur=parseRoomHash();
+  if(cur&&cur.code===code) history.replaceState(null,'','#'+code);
+  else location.hash=code;
   try{ localStorage.setItem('lastRoom',JSON.stringify({code,ts:Date.now()})); }catch(e){}
   board=new Array(CELLS).fill(0); turn=1; winner=0; winLine=null; lastMove=-1; hover=-1; oDrag=null;   // reset per-room state
   seats={1:null,2:null}; myRole=0; retry=0; SOLO=false; YOUIDX=0; clearReconn(); $('log').innerHTML='';
@@ -261,13 +271,17 @@ function enter(code){ room=code; location.hash=code; inGame=true;
   initBeat(); stopBeat(); initTet(); stopTet(); initMine();
   setMode(selMode);                              // provisional; the server state message corrects it
   $('lobby').classList.add('hidden'); $('game').classList.remove('hidden');
+  $('bootOv').classList.remove('hidden');        // 진짜 모드는 state 도착 후 확정 — 그때까지 임시 보드를 가림
+  if(bootWd)clearTimeout(bootWd);                // 소켓이 CONNECTING에서 블랙홀돼도 오버레이가 나가기를 막지 않게
+  bootWd=setTimeout(()=>{ $('bootOv').classList.add('hidden'); },8000);
   $('roomcode').textContent=code; ui(); connect(); draw(); if(MODE==='draw') clearDrawCanvas(); }
-function leave(){ inGame=false; clearReconn(); stopPing(); showConn(false);
+function leave(){ inGame=false; clearReconn(); stopPing(); showConn(false); $('bootOv').classList.add('hidden');
   if(ws){ try{ ws.onclose=null; ws.close(); }catch(e){} } ws=null; room=null;
   history.replaceState(null,'',location.pathname);
   $('game').classList.add('hidden'); $('lobby').classList.remove('hidden'); updateLastChip(); }
 $('btnLeave').onclick=leave;
-$('btnCopy').onclick=async()=>{ try{ await navigator.clipboard.writeText(location.origin+location.pathname+'#'+room);
+$('btnCopy').onclick=async()=>{ try{                     // 링크에 모드를 실어 조인 즉시 올바른 보드가 뜨게
+  await navigator.clipboard.writeText(location.origin+location.pathname+'#'+room+'-'+MODE);
   $('btnCopy').textContent='✓ 복사됨'; setTimeout(()=>$('btnCopy').textContent='🔗 초대링크 복사',1200);}catch(e){} };
 
 /* ---- websocket ---- */
@@ -285,7 +299,7 @@ function connect(){
     if(m&&typeof m==='object') handle(m); };
   sock.onclose=()=>{ if(sock!==ws) return; stopPing();
     if(!inGame){ showConn(false); return; }
-    if(++retry>8){ showConn(false);
+    if(++retry>8){ showConn(false); $('bootOv').classList.add('hidden');   // 오버레이가 나가기 버튼을 막지 않게
       log('sys','접속 실패 — 방이 가득 찼거나 서버 문제예요. 나갔다가 다시 들어와 보세요.'); return; }
     showConn(true);                                // input-blocking overlay while we reconnect
     log('sys','연결 끊김 — 재접속 중…');
@@ -294,6 +308,7 @@ function connect(){
 function send(o){ if(ws&&ws.readyState===1) ws.send(JSON.stringify(o)); }
 
 function handle(m){
+  if(m.t==='state') $('bootOv').classList.add('hidden');   // 어느 모드든 첫 상태 도착 = 진짜 보드 준비 완료
   /* ---- draw mode ---- */
   if(m.t==='state'&&m.mode==='draw'){ setMode('draw');
     DRAW={phase:m.phase,roundEnd:m.roundEnd,youDrawer:m.youDrawer,word:m.word,mask:m.mask};
@@ -648,6 +663,7 @@ cv.addEventListener('click',e=>{ if(MODE!=='omok'||lastPT==='touch')return; cons
 /* ---- draw mode (그림그리기) ---- */
 const DCOL=['#111827','#e02d2d','#2563eb','#16a34a','#f59e0b','#9333ea','#8b5a2b','#ffffff'];
 function setMode(mo){ MODE=mo;
+  if(inGame&&room){ try{ localStorage.setItem('lastRoom',JSON.stringify({code:room,ts:Date.now(),mode:mo})); }catch(e){} }
   const two = mo==='omok'||mo==='alka'||mo==='mine';    // 2-seat games use the pl1/pl2 panels
   const multi = mo==='draw'||mo==='beat'||mo==='tet';   // everyone-plays games use scores + wordbar
   $('pl1').classList.toggle('hidden',!two); $('pl2').classList.toggle('hidden',!two);
@@ -703,7 +719,8 @@ function showUndoBar(from){ const el=$('undoBar'); el.innerHTML='';
   no.onclick=()=>{ send({t:'undoRes',ok:false}); hideUndoBar(); };
   el.appendChild(s); el.appendChild(ok); el.appendChild(no); el.classList.remove('hidden'); }
 function hideUndoBar(){ $('undoBar').classList.add('hidden'); $('undoBar').innerHTML=''; }
-function showConn(v){ $('connOv').classList.toggle('hidden',!v); }
+function showConn(v){ $('connOv').classList.toggle('hidden',!v);
+  if(v) $('bootOv').classList.add('hidden'); }        // 재접속 오버레이가 뜨면 부트 오버레이는 양보
 function renderScores(list){ const el=$('scores'); el.innerHTML='';
   (list||[]).slice().sort((a,b)=>b.score-a.score).forEach(p=>{
     const d=document.createElement('div'); d.className='sc'+(p.online?'':' off')+(p.drawer?' drawer':'');
@@ -1388,7 +1405,7 @@ function updateLastChip(){ try{
   $('lastChip').classList.toggle('hidden',!ok||inGame);
   if(ok) $('lastChip').textContent='↻ 최근 방 '+lr.code+' 다시 입장'; }catch(e){} }
 $('lastChip').onclick=()=>{ try{ const lr=JSON.parse(localStorage.getItem('lastRoom')||'null');
-  if(lr&&lr.code&&myName()) enter(lr.code); }catch(e){} };
+  if(lr&&lr.code&&myName()){ if(lr.mode) selectMode(lr.mode); enter(lr.code); } }catch(e){} };
 function noise(){ if(noiseBuf)return noiseBuf; const b=actx.createBuffer(1,actx.sampleRate*0.1,actx.sampleRate);
   const d=b.getChannelData(0); for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1; noiseBuf=b; return b; }
 function kick(w){ const o=actx.createOscillator(),g=actx.createGain();
@@ -1636,17 +1653,26 @@ cv.addEventListener('pointercancel',()=>{ if(MODE==='tet') tetG=null; });
   mk2('⟲',()=>tetRot(-1)); mk2('⟳',()=>tetRot(1)); mk2('⇄',()=>tetHold()); mk2('⏬',()=>tetHard()); })();
 initTet();
 
+/* room hash 파싱: '#CODE' 또는 '#CODE-mode' (초대링크가 모드 힌트를 실음 — 오목 플래시 방지) */
+function parseRoomHash(){ const raw=location.hash.replace('#','');
+  const [c,mo]=raw.split('-'); const code=(c||'').toUpperCase();
+  if(!/^[A-Z0-9]{4,8}$/.test(code)) return null;
+  const mode=['omok','draw','alka','beat','tet','mine'].includes((mo||'').toLowerCase())?mo.toLowerCase():null;
+  return {code,mode}; }
+function enterParsed(p){ if(p.mode) selectMode(p.mode); enter(p.code); }
+
 /* browser back/forward: leaving the room hash exits to the lobby; a room hash (re)enters */
 window.addEventListener('hashchange',()=>{
-  const h=location.hash.replace('#','').toUpperCase();
-  const valid=/^[A-Z0-9]{4,8}$/.test(h)&&$('nick').value.trim();
-  if(inGame){ if(h!==room){ leave(); if(valid) enter(h); } }
-  else if(valid) enter(h);
+  const p=parseRoomHash();
+  const valid=p&&$('nick').value.trim();
+  if(inGame){ if(!p||p.code!==room){ leave(); if(valid) enterParsed(p); } }
+  else if(valid) enterParsed(p);
 });
 
 /* auto-join via #CODE (last: everything above must be initialized) */
-(function(){ const h=location.hash.replace('#','').toUpperCase();
-  if(/^[A-Z0-9]{4,8}$/.test(h)){ if($('nick').value.trim()) enter(h); else $('code').value=h; } })();
+(function(){ const p=parseRoomHash();
+  if(p){ if($('nick').value.trim()) enterParsed(p);
+    else{ $('code').value=p.code; if(p.mode) selectMode(p.mode); } } })();   // 닉 입력 후 입장해도 모드 유지
 updateLastChip();
 </script>
 </body>
