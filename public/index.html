@@ -6,9 +6,19 @@
 <title>🎮 멀티게임 라운지</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pretendard@1.3.9/dist/web/variable/pretendardvariable.min.css">
 <style>
-:root{--bg:#eef1f6;--card:#ffffff;--card2:#f4f6fa;--line:#e7eaf1;--text:#242936;
-  --soft:#5f6b80;--mute:#97a1b4;--cyan:#12b5a6;--coral:#ff6b5e;--ok:#14a56f;
-  --wood1:#e0b477;--wood2:#c08c4a;--sans:'Pretendard Variable',Pretendard,system-ui,sans-serif}
+:root{color-scheme:only light;   /* 안드로이드 Chrome 자동 다크 반전 차단 — 캔버스는 반전되지 않아 짝이 어긋남 */
+  --bg:#eef1f6;--card:#ffffff;--card2:#f4f6fa;--line:#e7eaf1;--text:#242936;
+  --soft:#5f6b80;--mute:#6f7b8f;--cyan:#0d9488;--coral:#ff6b5e;--ok:#0e8a5c;
+  --wood1:#e0b477;--wood2:#c08c4a;--sans:'Pretendard Variable',Pretendard,system-ui,sans-serif;
+  /* 표면 / 모서리 / 입면 / 모션 토큰 */
+  --hair2:#cdd5e3;--coral-ink:#d6483a;
+  --r1:10px;--r2:12px;--r3:14px;--pill:999px;
+  --e1:0 2px 6px -3px rgba(35,48,74,.25);
+  --e2:0 8px 20px -12px rgba(35,48,74,.3);
+  --e3:0 20px 48px -22px rgba(35,48,74,.45);
+  --ring:0 0 0 3px rgba(13,148,136,.24);
+  --dur:.14s;--ease:cubic-bezier(.4,0,.2,1);
+  --rgb:13 148 136;--acc-ink:#0d9488}   /* 모드 accent 기본값 — body.m-* 가 덮어씀 */
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:radial-gradient(1100px 700px at 70% -10%,#ffffff 0%,var(--bg) 62%);color:var(--text);
   font-family:var(--sans);min-height:100vh}
@@ -34,9 +44,10 @@ header .tag{font-size:10px;letter-spacing:.12em;color:var(--cyan);border:1px sol
 #lobby h2{font-size:16px;font-weight:800;margin-bottom:14px}
 .field{margin-bottom:12px}
 .field label{display:block;font-size:11.5px;color:var(--soft);margin-bottom:6px}
+/* font-size는 16px 미만이면 iOS Safari가 포커스 시 페이지를 강제 확대하고 그 상태가 남는다 */
 input[type=text]{width:100%;background:#fff;border:1.5px solid var(--line);border-radius:12px;
-  color:var(--text);font-family:var(--sans);font-size:14px;padding:11px 13px;outline:none}
-input[type=text]:focus{border-color:rgba(18,181,166,.6)}
+  color:var(--text);font-family:var(--sans);font-size:16px;padding:11px 13px;outline:none}
+input[type=text]:focus{border-color:rgba(13,148,136,.6);box-shadow:var(--ring)}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;border:none;
   font-family:var(--sans);font-weight:700;font-size:13.5px;border-radius:12px;padding:11px 16px;
   background:#eef1f7;color:var(--text);border:1.5px solid #cdd5e3;box-shadow:0 2px 6px -3px rgba(35,48,74,.25);
@@ -98,6 +109,14 @@ button.gitem:hover{border-color:rgba(18,181,166,.5)}
 .codechip{display:flex;align-items:center;gap:8px;background:#fff;border:1.5px solid var(--line);
   border-radius:999px;padding:7px 14px;font-size:13px;font-weight:800;letter-spacing:.14em;color:var(--cyan)}
 .codechip small{letter-spacing:0;font-weight:700;color:var(--mute)}
+/* '내 색' 칩: 캔버스 축소와 무관한 DOM 텍스트라 폰에서도 항상 읽힘.
+   --sc(내 편 색)은 점에만 쓴다 — 캔버스용 밝은 시안/앰버를 밝은 배경 위 글자색으로 쓰면 대비가 1.5:1까지 떨어짐 */
+#myside{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:800;
+  border-radius:999px;padding:5px 11px;color:var(--soft);
+  background:var(--card);border:1.5px solid var(--line)}
+#myside i{width:11px;height:11px;border-radius:50%;background:var(--sc,var(--soft));flex:none;
+  border:1px solid rgba(35,48,74,.25)}
+#myside b{color:var(--text);font-weight:800}
 #turnmsg{margin-left:auto;font-size:15px;font-weight:800;color:var(--soft)}
 #turnmsg.me{color:var(--ok)}
 #turnmsg.win{color:var(--coral)}
@@ -137,24 +156,262 @@ body.m-mine #pl2.turn{border-color:rgba(255,180,84,.85);background:rgba(255,180,
 #log .nm{font-weight:800;color:var(--coral)}
 .chatrow{display:flex;gap:7px}
 .chatrow input{flex:1}
+
+/* ============================================================
+   v0.27 UI 리프레시 — 아래 블록은 위 규칙을 지우지 않고 덮는다 (같은 특이도면 뒤가 이김).
+   ============================================================ */
+/* --- 한글 조판 + 숫자 폭 고정 (타이머/점수/방코드가 매 초 들썩이던 문제) --- */
+body{font-size:13.5px;line-height:1.5;letter-spacing:-.008em;
+  word-break:keep-all;overflow-wrap:break-word;
+  -webkit-text-size-adjust:100%;overscroll-behavior-y:contain}
+#timer,#turnmsg,.codechip,#roomcode,.scores .sc .pt,#offVal,#wobVal,#code,#myside{
+  font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+
+/* --- 모드 아이덴티티: 이 6줄이 로비 카드와 인게임 accent를 동시에 정의 --- */
+.gitem[data-mode=omok],body.m-omok{--rgb:76 91 125;--acc-ink:#3a4763}
+.gitem[data-mode=draw],body.m-draw{--rgb:242 96 79;--acc-ink:#c8402f}
+.gitem[data-mode=alka],body.m-alka{--rgb:192 140 74;--acc-ink:#8a5f24}
+.gitem[data-mode=beat],body.m-beat{--rgb:13 147 181;--acc-ink:#0a7391}
+.gitem[data-mode=tet],body.m-tet{--rgb:59 125 221;--acc-ink:#2653a8}
+.gitem[data-mode=mine],body.m-mine{--rgb:217 119 6;--acc-ink:#9a6205}
+
+/* --- 헤더 --- */
+header{gap:11px;margin-bottom:16px}
+header h1{font-size:19px;letter-spacing:-.02em}
+header .tag{font-size:9.5px;letter-spacing:.1em;color:var(--soft);border-color:var(--line);
+  padding:2px 8px;font-weight:800}
+.mutebtn{flex:none;width:40px;height:40px;padding:0;display:flex;align-items:center;
+  justify-content:center;border-radius:13px;font-size:17px;box-shadow:var(--e1)}
+
+/* --- 버튼 시스템: 변형별 토큰, 높이 통일, active/focus, 터치 hover 눌러붙음 방지 --- */
+.btn{--btn-bg:#eef1f7;--btn-bd:var(--hair2);background:var(--btn-bg);border:1.5px solid var(--btn-bd);
+  min-height:40px;line-height:1;box-shadow:var(--e1);user-select:none;
+  -webkit-tap-highlight-color:transparent;touch-action:manipulation;
+  transition:transform .1s var(--ease),filter var(--dur),box-shadow var(--dur),background var(--dur)}
+.btn:hover{background:var(--btn-bg)}
+.btn.primary{--btn-bg:linear-gradient(135deg,#17c7b2,#0fa093);--btn-bd:transparent}
+.btn.coral{--btn-bg:linear-gradient(135deg,#ff8a76,#f4604f);--btn-bd:transparent}
+.btn.mango{--btn-bg:linear-gradient(135deg,#ffc06a,#f59e0b);--btn-bd:transparent}
+.btn.leave{--btn-bg:#fff1ef;--btn-bd:rgba(255,107,94,.55)}
+.btn.tealout{--btn-bg:#ecf9f7;--btn-bd:rgba(13,148,136,.5)}
+@media(hover:hover){
+  .btn:hover{filter:brightness(.98);box-shadow:var(--e2)}
+  .btn.primary:hover,.btn.coral:hover,.btn.mango:hover{filter:brightness(1.06)}}
+@media(hover:none){
+  .btn.leave:hover,.btn.tealout:hover,.btn.mango:hover{background:var(--btn-bg);filter:none}}
+.btn:active{transform:translateY(1px) scale(.99);box-shadow:none}
+.btn:focus-visible{outline:2.5px solid rgba(13,148,136,.8);outline-offset:2px}
+.btn:disabled{opacity:.45;cursor:not-allowed;filter:none;transform:none;box-shadow:none}
+.mutebtn,.tools .sw,.tools .wd,.pl .pj,.msel{touch-action:manipulation;
+  -webkit-tap-highlight-color:transparent}
+.msel:focus-visible,.mutebtn:focus-visible,.pl .pj:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+
+/* --- 로비 셸 --- */
+#lobby{max-width:480px;padding:22px;border-radius:22px;position:relative;overflow:hidden}
+#lobby::before{content:'';position:absolute;left:0;right:0;top:0;height:3px;
+  background:linear-gradient(90deg,#4c5b7d,#f2604f,#c08c4a,#0d93b5,#3b7ddd,#d97706)}
+#lobby h2{font-size:17px;letter-spacing:-.02em;margin-bottom:14px}
+#lobby .field{display:flex;flex-direction:column;gap:1px;background:#fff;
+  border:1.5px solid var(--line);border-radius:var(--r3);padding:7px 13px 8px;margin-bottom:10px;
+  transition:border-color var(--dur),box-shadow var(--dur)}
+#lobby .field:focus-within{border-color:rgba(13,148,136,.65);box-shadow:var(--ring)}
+#lobby .field label{margin:0;font-size:10.5px;font-weight:700;color:var(--mute);cursor:text}
+#lobby .field input[type=text]{border:0;border-radius:0;background:transparent;
+  padding:2px 0 1px;font-weight:700;min-height:26px;box-shadow:none}
+#lobby .field input[type=text]:focus{border:0;box-shadow:none}
+#code{letter-spacing:.14em}
+#lastChip{min-height:44px;justify-content:flex-start;gap:8px;font-size:12.5px;
+  --btn-bg:#fff;--btn-bd:rgba(13,148,136,.5);border-style:dashed;color:var(--soft)}
+
+/* --- 게임 런처 카드: 모드별 색 + 선택 상태 --- */
+.games{gap:10px;margin:12px 0 16px}
+@media(min-width:520px){.games{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.gitem{--rgb:123 134 153;position:relative;display:flex;flex-direction:column;
+  align-items:flex-start;gap:9px;border-radius:16px;padding:12px;
+  background:linear-gradient(152deg,rgb(var(--rgb)/.12),var(--card) 66%);
+  font-size:13px;font-weight:800;box-shadow:var(--e2);
+  transition:transform var(--dur) var(--ease),box-shadow .16s,border-color .16s}
+.gitem .gi{display:flex;align-items:center;justify-content:center;width:36px;height:36px;flex:none;
+  border-radius:12px;font-size:19px;line-height:1;background:#fff;border:1px solid var(--line);
+  box-shadow:var(--e1)}
+.gitem .gl{display:block;width:100%;font-size:12.5px;letter-spacing:-.01em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gitem .soon{position:absolute;top:10px;right:11px;margin:0;padding:0;border:0;background:none;
+  font-size:8.5px;font-weight:900;letter-spacing:.1em;color:var(--mute)}
+.gitem.on{border-color:var(--line)}
+.gitem.on .soon{color:rgb(var(--rgb));opacity:.75;background:none;border:0}   /* 옛 초록 알약 배경 제거(특이도 0,3,0) */
+button.gitem{text-align:left;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+button.gitem:hover{border-color:rgb(var(--rgb)/.45);transform:translateY(-2px);
+  box-shadow:0 12px 24px -16px rgb(var(--rgb)/.8)}
+button.gitem:active{transform:translateY(1px) scale(.985)}
+button.gitem:focus-visible{outline:2.5px solid rgb(var(--rgb)/.9);outline-offset:2px}
+.gitem.sel{outline:none;border-color:rgb(var(--rgb)/.9);
+  background:linear-gradient(152deg,rgb(var(--rgb)/.2),#fff 78%);
+  box-shadow:0 10px 22px -14px rgb(var(--rgb)/.85),0 0 0 3px rgb(var(--rgb)/.14)}
+.gitem.sel .gi{border-color:rgb(var(--rgb)/.5)}
+.gitem.sel .soon{opacity:0}
+.gitem.sel::after{content:'✓';position:absolute;top:8px;right:8px;width:18px;height:18px;
+  border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:10px;font-weight:900;color:#fff;background:rgb(var(--rgb))}
+.gitem:not(.on){grid-column:1/-1;flex-direction:row;align-items:center;gap:10px;padding:10px 12px;
+  background:var(--card2);border-style:dashed;box-shadow:none;color:var(--mute)}
+.gitem:not(.on) .gi{width:28px;height:28px;font-size:15px;background:transparent;
+  border-color:transparent;box-shadow:none;filter:grayscale(.6);opacity:.8}
+.gitem:not(.on) .gl{width:auto;font-size:12px}
+.gitem:not(.on) .soon{position:static;margin-left:auto;font-size:9.5px;letter-spacing:0;
+  border:1px solid var(--line);border-radius:var(--pill);padding:2px 8px;background:#fff}
+
+/* --- 오버레이: 스피너 + 2줄 --- */
+#connOv,#bootOv{background:rgba(238,241,246,.66);backdrop-filter:blur(6px) saturate(1.05);
+  -webkit-backdrop-filter:blur(6px) saturate(1.05);padding:20px}
+#connOv .box,#bootOv .box{display:flex;flex-direction:column;align-items:center;gap:2px;
+  border-radius:20px;padding:22px 30px;box-shadow:var(--e3),inset 0 1px 0 rgba(255,255,255,.7)}
+#connOv .box b,#bootOv .box b{margin-top:10px;font-size:14px;font-weight:800}
+#connOv .box small,#bootOv .box small{font-size:11.5px;font-weight:700;color:var(--mute)}
+.spin{width:30px;height:30px;border-radius:50%;border:3px solid rgba(13,148,136,.16);
+  border-top-color:var(--cyan);animation:spin .8s linear infinite}
+.spin.warn{border-color:rgba(255,107,94,.16);border-top-color:var(--coral)}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* --- 인게임 크롬 --- */
+.topbar{gap:8px;background:var(--card2);border:1.5px solid var(--line);border-radius:var(--r3);
+  padding:8px 10px;border-left:3px solid rgb(var(--rgb))}
+.codechip{background:rgb(var(--rgb)/.10);border-color:rgb(var(--rgb)/.35);color:var(--acc-ink)}
+.codechip small{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute)}
+#board{background:var(--card2);
+  box-shadow:0 14px 34px -16px rgba(35,48,74,.4),0 6px 22px -14px rgb(var(--rgb)/.55)}
+#watch{align-self:flex-end;font-size:11px;font-weight:700;color:var(--soft);
+  background:var(--card2);border:1px solid var(--line);border-radius:var(--pill);
+  padding:4px 10px;text-align:center}
+#watch:empty{display:none}
+#mineBar{background:linear-gradient(135deg,rgba(255,180,84,.14),rgba(53,220,255,.08));
+  border:1.5px solid rgba(245,158,11,.34);border-radius:var(--r3);padding:10px;align-items:center}
+#undoBar{background:rgba(255,107,94,.07);border:1.5px solid rgba(255,107,94,.3);
+  border-radius:var(--r3);padding:10px;align-items:center}
+#mineBar .btn,#undoBar .btn,#wordPick .btn{min-height:34px;padding:8px 12px;font-size:12px;
+  border-radius:var(--r1)}
+.wob{background:var(--card2);border-color:var(--line);border-radius:var(--r2);padding:7px 12px;
+  min-height:38px}
+
+/* --- 턴 표시 알약 (6모드 공통 유일 지표) --- */
+#turnmsg{display:inline-flex;align-items:center;gap:7px;font-size:13px;
+  color:var(--soft);background:var(--card);border:1.5px solid var(--line);border-radius:var(--pill);
+  padding:7px 13px;line-height:1.15;transition:color .18s,background .18s,border-color .18s}
+#turnmsg:empty{display:none}
+#turnmsg::before{content:"";flex:none;width:7px;height:7px;border-radius:50%;
+  background:currentColor;opacity:.4}
+#turnmsg.me{color:#0b8f61;background:rgba(14,138,92,.1);border-color:rgba(14,138,92,.4)}
+#turnmsg.me::before{opacity:1;animation:tmPulse 1.4s ease-out infinite}
+#turnmsg.win{color:var(--coral-ink);background:rgba(255,107,94,.1);border-color:rgba(255,107,94,.45)}
+#turnmsg.win::before{opacity:1}
+@keyframes tmPulse{0%{box-shadow:0 0 0 0 rgba(14,138,92,.55)}70%,100%{box-shadow:0 0 0 7px rgba(14,138,92,0)}}
+@media(max-width:560px){#turnmsg{margin-left:0;flex:1 1 100%;justify-content:center}}
+
+/* --- 플레이어 패널: 아바타 + 이름/상태 2줄 (HTML 무변경, grid-area만 배정) --- */
+.pl{position:relative;display:grid;grid-template-columns:auto minmax(0,1fr) auto;
+  grid-template-areas:"av nm pj" "av st pj";column-gap:0;row-gap:1px;align-items:center;
+  border-radius:var(--r3);padding:10px 12px;overflow:hidden;
+  transition:border-color .18s,background .18s,box-shadow .18s}
+.pl .stone{grid-area:av;width:34px;height:34px;margin-right:11px;display:grid;place-items:center;
+  font-size:11.5px;font-weight:800;
+  box-shadow:0 3px 8px -3px rgba(35,48,74,.45),inset 0 1px 1px rgba(255,255,255,.4)}
+/* 좌석 번호는 부모 id에 붙인다 — setMode가 .stone의 className을 통째로 재작성하므로 */
+#pl1 .stone::after{content:"1"}
+#pl2 .stone::after{content:"2"}
+#pl1.me .stone::after,#pl2.me .stone::after{content:"나";font-size:11px}
+.pl .stone.b::after{color:rgba(255,255,255,.85)}
+.pl .stone.w::after{color:rgba(40,45,58,.55)}
+.pl .stone.p1c::after{color:rgba(4,52,72,.85)}
+.pl .stone.p2c::after{color:rgba(88,48,4,.85)}
+.pl.me .stone{box-shadow:0 0 0 2px rgba(13,148,136,.4),0 3px 8px -3px rgba(35,48,74,.45)}
+.pl .nm{grid-area:nm;font-size:13.5px;line-height:1.3}
+.pl.me .nm::after{content:none}      /* 아바타가 '나'를 표시 → 긴 닉네임 잘림 원인 제거 */
+.pl .st{grid-area:st;margin-left:0;font-size:11px;font-weight:700;color:var(--mute);
+  line-height:1.3;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pl .st:empty{display:none}
+.pl .pj{grid-area:pj;align-self:center;margin-left:10px}
+.pl::before{content:"";position:absolute;left:0;top:0;bottom:0;width:0;background:var(--ok);
+  transition:width .16s ease}
+.pl.turn::before{width:4px}
+body.m-mine #pl1.turn::before{background:#35dcff}
+body.m-mine #pl2.turn::before{background:#ffb454}
+@media(max-width:560px){.pl{padding:9px 11px}.pl .stone{width:30px;height:30px;margin-right:10px}}
+
+/* --- 채팅 로그: 버블 --- */
+#log{display:flex;flex-direction:column;gap:6px;border-radius:var(--r3);padding:10px;
+  line-height:1.6;overscroll-behavior:contain;scrollbar-width:thin;
+  scrollbar-color:var(--hair2) transparent}
+#log>div{align-self:flex-start;max-width:88%;background:var(--card);border:1px solid var(--line);
+  border-radius:13px 13px 13px 5px;padding:6px 10px;box-shadow:0 2px 6px -5px rgba(35,48,74,.6);
+  word-break:break-word}
+#log>div.sys{max-width:100%;align-self:center;text-align:center;background:transparent;border:none;
+  box-shadow:none;padding:1px 4px;color:var(--mute);font-size:11.5px}
+#log .nm{display:block;font-size:11px;font-weight:800;color:var(--coral-ink);margin-bottom:1px}
+#log>div.mine{align-self:flex-end;border-radius:13px 13px 5px 13px;background:#eafaf7;
+  border-color:rgba(13,148,136,.35)}
+#log>div.mine .nm{color:var(--cyan);text-align:right}
+.chatrow{gap:8px}
+.chatrow input{min-width:0;padding:10px 12px;border-radius:var(--r2)}
+
+/* --- 순위 칩 (그림/리듬/테트리스) --- */
+.scores{counter-reset:rk}
+.scores .sc{counter-increment:rk;gap:9px;border-radius:var(--r2);padding:8px 10px 8px 8px}
+.scores .sc::before{content:counter(rk);flex:none;width:20px;height:20px;border-radius:7px;
+  display:grid;place-items:center;font-size:10.5px;font-weight:800;color:var(--soft);
+  background:var(--card);border:1px solid var(--line)}
+.scores .sc:nth-child(1)::before{color:#8a5a00;background:linear-gradient(135deg,#ffe7a8,#ffcd63);
+  border-color:rgba(180,120,0,.28)}
+.scores .sc:nth-child(2)::before{color:#59616f;background:linear-gradient(135deg,#f2f5fa,#dee3ed)}
+.scores .sc:nth-child(3)::before{color:#8a5230;background:linear-gradient(135deg,#f8ddc8,#eec4a3)}
+.scores .sc>span:first-of-type{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* --- 모바일 밀도: 360px에서 보드 실사용 폭 +9% --- */
+@media(max-width:520px){
+  .wrap{padding:14px 10px}
+  .card{padding:14px;border-radius:16px}
+  header{margin-bottom:12px}
+  #game{gap:12px}
+  .boardcard{gap:10px}
+  .topbar{gap:7px}
+  .row.actions{gap:7px}
+  #log{min-height:120px;max-height:32vh}
+  .tools .sw{width:34px;height:34px}
+  .tools .wd{width:44px;height:32px}
+}
+@media(max-width:400px){
+  #lobby{padding:18px 15px;border-radius:20px}
+  .codechip{letter-spacing:.08em;padding:6px 11px}
+}
+
+/* --- 동작 줄이기: 펄스는 끄되 '누구 차례' 정보는 정적 링으로 유지 --- */
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;
+    transition-duration:.001ms!important}
+  .spin{animation-duration:2.2s!important;animation-iteration-count:infinite!important}
+  button.gitem:hover,.btn:active{transform:none}
+  .pl.turn{animation:none;box-shadow:0 0 0 2px rgba(14,138,92,.5)}
+  body.m-mine #pl1.turn{animation:none;box-shadow:0 0 0 2px rgba(53,220,255,.55)}
+  body.m-mine #pl2.turn{animation:none;box-shadow:0 0 0 2px rgba(255,180,84,.6)}
+  #turnmsg.me::before{animation:none}
+}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.26</span>
+  <header><h1>🎮 멀티게임 라운지</h1><span class="tag">phyksw · rooms · v0.27</span>
     <button type="button" id="btnMute" class="mutebtn" title="효과음 켜기/끄기">🔊</button></header>
 
   <!-- lobby -->
   <div id="lobby" class="card">
     <h2>친구랑 같이 하는 미니게임</h2>
     <div class="games" id="gamesList">
-      <button type="button" class="gitem on sel" data-mode="omok">⚫ 오목 <span class="soon">PLAY</span></button>
-      <button type="button" class="gitem on" data-mode="draw">🎨 그림 맞추기 <span class="soon">PLAY</span></button>
-      <button type="button" class="gitem on" data-mode="alka">🥌 알까기 <span class="soon">PLAY</span></button>
-      <button type="button" class="gitem on" data-mode="beat">🎵 리듬 <span class="soon">PLAY</span></button>
-      <button type="button" class="gitem on" data-mode="tet">🧱 테트리스 <span class="soon">PLAY</span></button>
-      <button type="button" class="gitem on" data-mode="mine">💣 망각의 지뢰 <span class="soon">PLAY</span></button>
-      <div class="gitem">🗺️ 땅따먹기 <span class="soon">준비중</span></div>
+      <button type="button" class="gitem on sel" data-mode="omok"><span class="gi" aria-hidden="true">⚫</span><span class="gl">오목</span><span class="soon">PLAY</span></button>
+      <button type="button" class="gitem on" data-mode="draw"><span class="gi" aria-hidden="true">🎨</span><span class="gl">그림 맞추기</span><span class="soon">PLAY</span></button>
+      <button type="button" class="gitem on" data-mode="alka"><span class="gi" aria-hidden="true">🥌</span><span class="gl">알까기</span><span class="soon">PLAY</span></button>
+      <button type="button" class="gitem on" data-mode="beat"><span class="gi" aria-hidden="true">🎵</span><span class="gl">리듬</span><span class="soon">PLAY</span></button>
+      <button type="button" class="gitem on" data-mode="tet"><span class="gi" aria-hidden="true">🧱</span><span class="gl">테트리스</span><span class="soon">PLAY</span></button>
+      <button type="button" class="gitem on" data-mode="mine"><span class="gi" aria-hidden="true">💣</span><span class="gl">망각의 지뢰</span><span class="soon">PLAY</span></button>
+      <div class="gitem" aria-disabled="true"><span class="gi" aria-hidden="true">🗺️</span><span class="gl">땅따먹기</span><span class="soon">준비중</span></div>
     </div>
     <div class="field"><label>닉네임</label><input type="text" id="nick" maxlength="12" placeholder="예: 김선장"></div>
     <div class="field"><label>방 코드 (입장할 때만)</label><input type="text" id="code" maxlength="14" placeholder="예: A3K9F" style="text-transform:uppercase"></div>
@@ -165,8 +422,8 @@ body.m-mine #pl2.turn{border-color:rgba(255,180,84,.85);background:rgba(255,180,
     <button class="btn tealout hidden" id="lastChip" style="margin-top:10px;width:100%"></button>
   </div>
 
-  <div id="connOv" class="hidden"><div class="box">📶 연결이 끊겨 재접속 중…</div></div>
-  <div id="bootOv" class="hidden"><div class="box">🎮 게임 불러오는 중…</div></div>
+  <div id="connOv" class="hidden"><div class="box"><span class="spin warn"></span><b>연결이 끊겼어요</b><small>다시 접속하는 중…</small></div></div>
+  <div id="bootOv" class="hidden"><div class="box"><span class="spin"></span><b>게임을 불러오는 중</b><small>보드를 준비하고 있어요…</small></div></div>
 
   <!-- game -->
   <div id="game" class="hidden">
@@ -178,6 +435,7 @@ body.m-mine #pl2.turn{border-color:rgba(255,180,84,.85);background:rgba(255,180,
           <option value="omok">⚫ 오목</option><option value="draw">🎨 그림</option>
           <option value="alka">🥌 알까기</option><option value="beat">🎵 리듬</option>
           <option value="tet">🧱 테트리스</option><option value="mine">💣 망각의 지뢰</option></select>
+        <span id="myside" class="hidden"></span>
         <span id="turnmsg"></span>
       </div>
       <div class="wordbar hidden" id="wordbar"><span id="wordtxt"></span><span id="timer"></span></div>
@@ -197,6 +455,7 @@ body.m-mine #pl2.turn{border-color:rgba(255,180,84,.85);background:rgba(255,180,
           <div class="wob hidden" id="beatCfg" title="판정이 계속 빠름/느림이면 조절하세요">🎚 보정
             <input type="range" id="offRange" min="-150" max="150" step="5" value="0">
             <span id="offVal">0ms</span></div>
+          <button class="btn hidden" id="btn33" title="쌍삼(열린 삼 2개를 동시에 만드는 수) 금지 — 첫 수 전에만 변경할 수 있어요">🚫 33 금수</button>
           <button class="btn hidden" id="btnUndo" title="상대 동의를 받아 마지막 수를 되돌립니다">↩ 무르기</button>
           <button class="btn leave hidden" id="btnResign" title="기권하면 상대의 승리로 끝납니다">🏳 기권</button>
         </div>
@@ -229,7 +488,16 @@ const TOKEN = localStorage.getItem('gtoken');
 /* ---- state ---- */
 let ws=null, room=null, myRole=0, board=new Array(CELLS).fill(0),
     turn=1, winner=0, winLine=null, seats={1:null,2:null}, lastMove=-1, inGame=false,
-    retry=0, reconnT=null, pingT=null, bootWd=null;
+    retry=0, reconnT=null, pingT=null, bootWd=null, RULE33=true;   // RULE33: 오목 쌍삼 금수 적용 여부(서버 권위)
+/* 내가 어느 편인지 항상 보이는 칩 — "내가 무슨 색인지 모르겠다" 피드백 대응 */
+function setMySide(col,label){ const el=$('myside');
+  if(!col){ el.classList.add('hidden'); el.textContent=''; return; }
+  el.classList.remove('hidden'); el.style.setProperty('--sc',col);
+  el.innerHTML='<i></i>나 = <b></b>';
+  el.querySelector('b').textContent=label; }
+let turnPinged={omok:false,alka:false};   // '내 차례' 알림 rising-edge 래치 (모드별)
+function turnPing(mo,myGo){ if(myGo&&!turnPinged[mo]){ sfxTurn(); if(navigator.vibrate)navigator.vibrate(60); }
+  turnPinged[mo]=myGo; }
 let MODE='omok', selMode='omok', timerIv=null,
     DRAW={phase:'lobby',roundEnd:0,youDrawer:false,word:null,mask:''},
     tool={c:0,w:4},
@@ -458,6 +726,7 @@ function handle(m){
   /* ---- omok ---- */
   if(m.t==='state'){ setMode('omok'); board=m.board.split('').map(Number); turn=m.turn; winner=m.winner;
     winLine=m.winLine; seats=m.seats; myRole=m.role; SOLO=!!m.solo; YOUIDX=m.youIdx||0;
+    RULE33=m.r33!==false;
     lastMove=(typeof m.last==='number'&&m.last>=0&&board[m.last])?m.last:-1; ui(); draw();
     log('sys', SOLO&&myRole? `혼자 두기 (라운드 ${m.round})` : myRole? `당신은 ${myRole===1?'흑':'백'}${YOUIDX===1?'팀':''}입니다 (라운드 ${m.round})` : '관전 모드');
     hideUndoBar();
@@ -467,17 +736,47 @@ function handle(m){
     sfxPlace(); if(m.winner&&m.winner!==3) sfxGood();
     hideUndoBar();                                 // a new move voids any pending undo ask
     lastMove=m.i; ui(); draw(); return; }
+  if(m.t==='o33'){ if(MODE!=='omok')return; RULE33=!!m.v; ui(); draw(); return; }
+  if(m.t==='nope'){ if(m.why==='33'){ sfxNope();      // 서버가 거부한 이유를 반드시 화면에 남긴다
+      log('sys','🚫 그 자리는 33(쌍삼) 금수예요 — 열린 삼 2개가 동시에 생깁니다. 빗금 칸은 둘 수 없어요');
+      recalc33(); draw(); } return; }
   if(m.t==='undoAsk'){ if(MODE==='omok') showUndoBar(m.from); return; }
   if(m.t==='err'&&m.code==='full'){ inGame=false; leave();
     alert('방이 가득 찼어요 (최대 '+(m.max||20)+'명). 다른 방 코드를 사용해 주세요!'); return; }
   if(m.t==='roster'){ seats=m.seats; if(typeof m.solo!=='undefined') SOLO=!!m.solo;
-    $('watch').textContent=m.watchers?`👀 관전 ${m.watchers}명`:''; ui(); aui(); mui(); if(MODE==='mine')mrender(); return; }
+    $('watch').textContent=m.watchers?`👀 관전 ${m.watchers}명`:''; ui(); aui(); mui();
+    if(MODE==='mine')mrender(); else if(MODE==='omok')draw();   // ui()가 O_BAN을 갱신하므로 금수 ✕도 함께 다시 그린다
+    return; }
   if(m.t==='chat'){ log('chat',m.text,m.name); return; }
   if(m.t==='sys'){ log('sys',m.text); return; }
 }
 
 /* ---- ui ---- */
 function boardEmpty(){ return board.every(v=>!v); }
+/* ---- 오목 33 금수(쌍삼): 서버와 동일 판정을 클라에서도 돌려 '둘 수 없는 칸'을 미리 보여준다 ---- */
+const O_DIRS=[[1,0],[0,1],[1,1],[1,-1]];
+function oRun(b,i,dx,dy,v){ const x=i%SIZE,y=(i/SIZE)|0,cells=[i],ends={};
+  for(const s of [1,-1]){ let nx=x+dx*s,ny=y+dy*s;
+    while(nx>=0&&nx<SIZE&&ny>=0&&ny<SIZE&&b[ny*SIZE+nx]===v){ cells.push(ny*SIZE+nx); nx+=dx*s; ny+=dy*s; }
+    ends[s]=(nx>=0&&nx<SIZE&&ny>=0&&ny<SIZE)?ny*SIZE+nx:-1; }
+  return {cells,e1:ends[1],e2:ends[-1]}; }
+function oOpen3(b,i,dx,dy,v){ const x=i%SIZE,y=(i/SIZE)|0;
+  for(let t=-4;t<=4;t++){ if(!t)continue;
+    const nx=x+dx*t,ny=y+dy*t; if(nx<0||nx>=SIZE||ny<0||ny>=SIZE)continue;
+    const j=ny*SIZE+nx; if(b[j]!==0)continue;
+    b[j]=v; const r=oRun(b,j,dx,dy,v);
+    const open=r.cells.length===4&&r.e1>=0&&b[r.e1]===0&&r.e2>=0&&b[r.e2]===0&&r.cells.includes(i);
+    b[j]=0; if(open)return true; }
+  return false; }
+function oWin5(b,i,v){ for(const [dx,dy] of O_DIRS) if(oRun(b,i,dx,dy,v).cells.length>=5) return true; return false; }
+function oForbid(b,i,v){ if(b[i]!==0)return false;
+  b[i]=v; let bad=false;
+  if(!oWin5(b,i,v)){ let n=0; for(const [dx,dy] of O_DIRS) if(oOpen3(b,i,dx,dy,v)&&++n>=2){ bad=true; break; } }
+  b[i]=0; return bad; }
+let O_BAN=new Set();                        // 내 차례의 금수 칸 — 매 프레임 대신 수마다 1회 계산
+function recalc33(){ O_BAN=new Set();
+  if(!RULE33||winner||!myTurnNow())return;
+  for(let i=0;i<CELLS;i++) if(board[i]===0&&oForbid(board,i,turn)) O_BAN.add(i); }
 function myTurnNow(){                       // may I place a stone right now?
   if(!(seats&&seats[1]&&seats[2])||winner) return false;
   if(SOLO) return myRole!==0;
@@ -506,18 +805,27 @@ function ui(){
   if(winner===3){ t.textContent='무승부!'; t.className='win'; }
   else if(winner){ t.textContent=(SOLO?'게임 종료':(winner===myRole?'🏆 승리!':(myRole?'패배…':'게임 종료')))+' — '+(winner===1?'흑':'백')+' 승'; t.className='win'; }
   else if(!(seats&&seats[1]&&seats[2])) t.textContent='상대를 기다리는 중… 초대 또는 혼자 두기';
-  else if(SOLO&&myRole){ t.textContent='● 내 차례 — '+(turn===1?'흑':'백')+' 돌'; t.className='me'; }
+  else if(SOLO&&myRole){ t.textContent='내 차례 — '+(turn===1?'흑':'백')+' 돌'; t.className='me'; }
   else if(myRole===turn){
-    if(myTurnNow()){ t.textContent='● 내 차례'; t.className='me'; }
+    if(myTurnNow()){ t.textContent='내 차례'; t.className='me'; }
     else{ const st2=seats[turn], upN=(st2.up===1&&st2.mate)?st2.mate.name:st2.name;
       t.textContent='우리 팀 차례 — '+upN+'님이 둘 차례'; } }
   else t.textContent=(turn===1?'흑':'백')+' 차례'+(myRole?'':' (관전)');
+  setMySide(myRole&&!SOLO?(myRole===1?'#2b3245':'#9aa6bd'):null, myRole===1?'흑 ⚫':'백 ⚪');
+  turnPing('omok', !winner&&!SOLO&&myRole>0&&myRole===turn&&myTurnNow()&&!!(seats&&seats[1]&&seats[2]));
+  const b33=$('btn33');                       // 첫 수 전에만 변경 가능 — 이후에는 상태 표시로만 남김
+  b33.classList.toggle('hidden', !(myRole===1||myRole===2));
+  b33.textContent=(RULE33?'🚫 33 금수 ON':'⭕ 33 금수 OFF')+(boardEmpty()&&!winner?'':' (잠김)');
+  b33.classList.toggle('primary', RULE33);
+  b33.disabled=!(boardEmpty()&&!winner);
+  recalc33();
 }
 function log(kind,text,name){
   const d=document.createElement('div');
-  if(kind==='sys'){ d.className='sys'; d.textContent='· '+text; }
+  if(kind==='sys'){ d.className='sys'; d.textContent=text; }   // 중앙 정렬이므로 '· ' 접두사 불필요
   else{ const n=document.createElement('span'); n.className='nm'; n.textContent=name+'  ';
-    d.appendChild(n); d.appendChild(document.createTextNode(text)); }
+    d.appendChild(n); d.appendChild(document.createTextNode(text));
+    if(name===$('nick').value.trim().slice(0,12)) d.classList.add('mine'); }   // 내 메시지는 우측 버블
   $('log').appendChild(d); $('log').scrollTop=$('log').scrollHeight;
   while($('log').childNodes.length>120) $('log').removeChild($('log').firstChild);
 }
@@ -525,6 +833,7 @@ $('btnSend').onclick=()=>{ const v=$('chat').value.trim(); if(!v)return; send({t
 $('chat').addEventListener('keydown',e=>{ if(e.key==='Enter') $('btnSend').click(); });
 $('btnRestart').onclick=()=>{ $('btnRestart').disabled=true; send({t:'restart'}); };
 $('btnSolo').onclick=()=>send({t:'solo'});
+$('btn33').onclick=()=>send({t:'o33',v:RULE33?0:1});
 $('btnUndo').onclick=()=>send({t:'undoReq'});
 $('btnResign').onclick=()=>{ if(confirm('정말 기권할까요? 상대의 승리로 기록됩니다.')) send({t:'resign'}); };
 $('modeSel').onchange=()=>{ const v=$('modeSel').value; $('modeSel').value=MODE;  // revert; real switch arrives as state
@@ -540,36 +849,87 @@ const px=i=>PAD+(i%SIZE)*step, py=i=>PAD+((i/SIZE)|0)*step;
 let hover=-1, lastPT='mouse',
     oDrag=null;                                  // touch: {t0,x0,y0,moved} — hold&drag aims, release places
 
+/* ---- 공용 캔버스 페인트 킷: 6개 모드가 같은 색·모서리를 쓰게 한다.
+        좌표/셀 수학은 건드리지 않고 '칠하는 방식'만 담당. 그라디언트는 1회 캐시(핫 루프 보호). ---- */
+function hexA(h,a){ const n=parseInt(h.slice(1),16);
+  return 'rgba('+(n>>16&255)+','+(n>>8&255)+','+(n&255)+','+(+a).toFixed(3)+')'; }
+function rrect(x,y,w,h,r){ const rr=Math.max(0,Math.min(r,w/2,h/2)); cx.beginPath();
+  if(cx.roundRect){ cx.roundRect(x,y,w,h,rr); return; }
+  cx.moveTo(x+rr,y); cx.arcTo(x+w,y,x+w,y+h,rr); cx.arcTo(x+w,y+h,x,y+h,rr);
+  cx.arcTo(x,y+h,x,y,rr); cx.arcTo(x,y,x+w,y,rr); cx.closePath(); }   /* 호출측에서 fill()/stroke() */
+let BGCACHE=null;                                // 다크 보드(지뢰/리듬/테트리스) 공통 배경
+function boardBg(){ if(!BGCACHE){
+    BGCACHE=cx.createRadialGradient(CSS*.5,CSS*.34,40,CSS*.5,CSS*.52,CSS*.8);
+    BGCACHE.addColorStop(0,'#17223d'); BGCACHE.addColorStop(.55,'#0e1526'); BGCACHE.addColorStop(1,'#080c17'); }
+  cx.fillStyle=BGCACHE; cx.fillRect(0,0,CSS,CSS); }
+let WOODCV=null;                                 // 나무 보드(오목/알까기): 오프스크린에 1회만 렌더
+function woodBg(){ if(!WOODCV){
+    WOODCV=document.createElement('canvas'); WOODCV.width=WOODCV.height=CSS;
+    const w=WOODCV.getContext('2d');
+    const g1=w.createLinearGradient(0,0,CSS*.55,CSS);
+    g1.addColorStop(0,'#ecd2a6'); g1.addColorStop(.42,'#dcb079'); g1.addColorStop(1,'#c28c48');
+    w.fillStyle=g1; w.fillRect(0,0,CSS,CSS);
+    w.globalAlpha=.05; w.strokeStyle='#6b4419'; w.lineWidth=1;
+    for(let k=0;k<14;k++){ const y=18+k*43; w.beginPath(); w.moveTo(0,y);
+      w.bezierCurveTo(CSS*.3,y-6,CSS*.7,y+7,CSS,y-3); w.stroke(); }
+    w.globalAlpha=1;
+    const g2=w.createRadialGradient(CSS*.42,CSS*.3,CSS*.18,CSS*.5,CSS*.55,CSS*.8);
+    g2.addColorStop(0,'rgba(255,246,225,.26)'); g2.addColorStop(.62,'rgba(255,246,225,0)');
+    g2.addColorStop(1,'rgba(60,32,8,.22)');
+    w.fillStyle=g2; w.fillRect(0,0,CSS,CSS); }
+  cx.drawImage(WOODCV,0,0,CSS,CSS); }
+
 function draw(){
   if(MODE!=='omok') return;
   cx.setTransform(DPR,0,0,DPR,0,0);
-  const g=cx.createLinearGradient(0,0,CSS,CSS); g.addColorStop(0,'#e2b87e'); g.addColorStop(1,'#c89554');
-  cx.fillStyle=g; cx.fillRect(0,0,CSS,CSS);
-  cx.strokeStyle='rgba(80,50,20,.55)'; cx.lineWidth=1;
+  woodBg();                                              // 결 + 중앙 하이라이트 + 가장자리 비네트
+  cx.strokeStyle='rgba(74,45,16,.42)'; cx.lineWidth=1;   // 내부선은 얇고 옅게 → 돌이 선에 묻히지 않음
   for(let k=0;k<SIZE;k++){
     cx.beginPath(); cx.moveTo(PAD,PAD+k*step); cx.lineTo(CSS-PAD,PAD+k*step); cx.stroke();
     cx.beginPath(); cx.moveTo(PAD+k*step,PAD); cx.lineTo(PAD+k*step,CSS-PAD); cx.stroke(); }
-  cx.fillStyle='rgba(80,50,20,.75)';
+  cx.strokeStyle='rgba(74,45,16,.72)'; cx.lineWidth=2;   // 외곽만 굵게 = 판이 '끝나는' 느낌
+  cx.strokeRect(PAD,PAD,CSS-PAD*2,CSS-PAD*2);
+  cx.lineWidth=1;
+  cx.fillStyle='rgba(74,45,16,.8)';
   for(const sx of [3,7,11]) for(const sy of [3,7,11]){
-    cx.beginPath(); cx.arc(PAD+sx*step,PAD+sy*step,3,0,7); cx.fill(); }
+    cx.beginPath(); cx.arc(PAD+sx*step,PAD+sy*step,3.4,0,7); cx.fill(); }
+  // 33 금수 칸: 탭해도 거부되는 자리를 미리 알려준다 (내 차례에만)
+  if(O_BAN.size){ cx.save(); cx.lineWidth=1.6; cx.strokeStyle='rgba(214,48,42,.55)';
+    const q=step*0.30;
+    for(const i of O_BAN){ const x=px(i),y=py(i);
+      cx.beginPath(); cx.moveTo(x-q,y-q); cx.lineTo(x+q,y+q);
+      cx.moveTo(x+q,y-q); cx.lineTo(x-q,y+q); cx.stroke(); }
+    cx.restore(); }
   // placement guide: translucent stone at hover (mouse) / drag-aim (touch)
   if(hover>=0 && board[hover]===0 && myTurnNow()){
-    faceStone(px(hover),py(hover),SR,turn,EXP.neutral,.55);
-    if(oDrag){ cx.strokeStyle='rgba(255,111,97,.9)'; cx.lineWidth=2.5; cx.setLineDash([5,4]);
+    const banned=O_BAN.has(hover);
+    faceStone(px(hover),py(hover),SR,turn,EXP.neutral,banned?.25:.55);
+    if(banned){ const x=px(hover),y=py(hover);      // 조준 중에도 '여기는 금수'가 보이게
+      cx.save(); cx.strokeStyle='#d6302a'; cx.lineWidth=3; cx.globalAlpha=.95;
+      cx.beginPath(); cx.arc(x,y,SR+2,0,7); cx.stroke();
+      cx.beginPath(); cx.moveTo(x-SR*0.6,y+SR*0.6); cx.lineTo(x+SR*0.6,y-SR*0.6); cx.stroke();
+      cx.restore(); }
+    else if(oDrag){ cx.strokeStyle='rgba(255,111,97,.9)'; cx.lineWidth=2.5; cx.setLineDash([5,4]);
       cx.beginPath(); cx.arc(px(hover),py(hover),SR+4,0,7); cx.stroke(); cx.setLineDash([]); } }
   // stones
   for(let i=0;i<CELLS;i++) if(board[i]) faceStone(px(i),py(i),SR,board[i],omokExp(i));
   // last move marker
-  if(lastMove>=0 && board[lastMove]){ cx.strokeStyle='#ff6f61'; cx.lineWidth=2;
-    cx.beginPath(); cx.arc(px(lastMove),py(lastMove),SR+3,0,7); cx.stroke(); }
+  if(lastMove>=0 && board[lastMove]){ const lx=px(lastMove), ly=py(lastMove);
+    cx.beginPath(); cx.arc(lx,ly,SR+3.4,0,7);
+    cx.strokeStyle='rgba(255,255,255,.85)'; cx.lineWidth=3.6; cx.stroke();   // 흰 밑선 → 흑돌에서도 보임
+    cx.strokeStyle='#ff5a4d'; cx.lineWidth=2; cx.stroke(); }
   // win line: connect the two farthest-apart cells of the winning row
   if(winLine&&winLine.length>1){
     let a=winLine[0], b=winLine[1], best=-1;
     for(const i of winLine) for(const j of winLine){
       const d=(px(i)-px(j))**2+(py(i)-py(j))**2;
       if(d>best){ best=d; a=i; b=j; } }
-    cx.strokeStyle='rgba(255,111,97,.9)'; cx.lineWidth=4; cx.lineCap='round';
-    cx.beginPath(); cx.moveTo(px(a),py(a)); cx.lineTo(px(b),py(b)); cx.stroke(); }
+    cx.save(); cx.lineCap='round';                  // save/restore: lineCap이 다음 프레임으로 누수되지 않게
+    cx.shadowColor='rgba(255,90,70,.85)'; cx.shadowBlur=16;
+    cx.beginPath(); cx.moveTo(px(a),py(a)); cx.lineTo(px(b),py(b));
+    cx.strokeStyle='rgba(255,255,255,.9)'; cx.lineWidth=7; cx.stroke();
+    cx.strokeStyle='#ff5a4d'; cx.lineWidth=4; cx.stroke();
+    cx.restore(); }
 }
 function stone(x,y,v){
   const r=step*.42, gr=cx.createRadialGradient(x-r*.35,y-r*.4,r*.1,x,y,r);
@@ -654,11 +1014,16 @@ cv.addEventListener('pointerup',e=>{ if(MODE!=='omok'||!oDrag)return;
   const off=oOffNow(); oDrag=null; stopOAnim();
   const i=cellNear(x,y-off);                       // exactly what the ghost showed
   hover=-1;
-  if(i>=0&&board[i]===0&&myTurnNow()) send({t:'move',i}); else draw(); });
+  if(i>=0&&board[i]===0&&myTurnNow()) tryMove(i); else draw(); });
 cv.addEventListener('pointercancel',()=>{ if(MODE==='omok'&&oDrag){ oDrag=null; stopOAnim(); hover=-1; draw(); } });
 cv.addEventListener('click',e=>{ if(MODE!=='omok'||lastPT==='touch')return; const i=cellAt(e);
   if(i<0||board[i]!==0||!myTurnNow()) return;
-  send({t:'move',i}); });
+  tryMove(i); });
+/* 금수는 서버도 거부하지만, 왕복을 기다리지 않고 즉시 이유를 알려준다 (무반응 = 먹통으로 오인됨) */
+function tryMove(i){ if(O_BAN.has(i)){ sfxNope();
+    log('sys','🚫 그 자리는 33(쌍삼) 금수예요 — 빗금(✕) 표시된 칸은 둘 수 없어요');
+    draw(); return; }
+  send({t:'move',i}); }
 
 /* ---- draw mode (그림그리기) ---- */
 const DCOL=['#111827','#e02d2d','#2563eb','#16a34a','#f59e0b','#9333ea','#8b5a2b','#ffffff'];
@@ -667,7 +1032,10 @@ function setMode(mo){ MODE=mo;
   const two = mo==='omok'||mo==='alka'||mo==='mine';    // 2-seat games use the pl1/pl2 panels
   const multi = mo==='draw'||mo==='beat'||mo==='tet';   // everyone-plays games use scores + wordbar
   $('pl1').classList.toggle('hidden',!two); $('pl2').classList.toggle('hidden',!two);
-  document.body.classList.toggle('m-mine', mo==='mine');           // mine 전용 턴 펄스 CSS 게이트
+  for(const k of ['omok','draw','alka','beat','tet','mine'])
+    document.body.classList.toggle('m-'+k, mo===k);   // m-mine 유지 + 모드별 accent 토큰 게이트
+  $('turnmsg').textContent=''; $('turnmsg').className='';   // 모드 전환 시 이전 모드 턴 문구가 남던 버그
+  if(!two) setMySide(null);                                        // 여러 명이 함께 하는 모드는 편 개념이 없음
   $('pl1').querySelector('.stone').className = mo==='mine'?'stone p1c':'stone b';
   $('pl2').querySelector('.stone').className = mo==='mine'?'stone p2c':'stone w';
   $('scores').classList.toggle('hidden',!multi); $('wordbar').classList.toggle('hidden',!multi);
@@ -683,6 +1051,8 @@ function setMode(mo){ MODE=mo;
   $('tools').classList.add('hidden'); $('btnBegin').classList.add('hidden'); $('btnSolo').classList.add('hidden');
   $('wobBox').classList.add('hidden'); $('tpad').classList.add('hidden'); $('mineBar').classList.add('hidden');
   $('btnUndo').classList.add('hidden'); $('btnResign').classList.add('hidden');
+  $('btn33').classList.add('hidden');            // 오목 전용 — ui()만 다시 보여준다
+  turnPinged={omok:false,alka:false};             // 모드 왕복 후 첫 '내 차례' 알림이 씹히지 않게
   $('beatCfg').classList.toggle('hidden',mo!=='beat');
   hideWordPick(); hideUndoBar();
   $('modeSel').value=mo;
@@ -789,9 +1159,11 @@ function aui(){ if(MODE!=='alka')return;
   if(AL.winner){ t.textContent=(SOLO?'게임 종료':(AL.winner===myRole?'🏆 승리!':(myRole?'패배…':'게임 종료')))+' — '+(AL.winner===1?'흑':'백')+' 승'; t.className='win'; }
   else if(!(seats&&seats[1]&&seats[2])) t.textContent='상대를 기다리는 중… 초대 또는 혼자 두기';
   else if(AL.phase==='sim') t.textContent='돌 굴러가는 중…';
-  else if(SOLO&&myRole){ t.textContent='● 내 차례 — '+(AL.turn===1?'흑':'백')+' 돌을 탭 → 당겨서 발사!'; t.className='me'; }
-  else if(myRole===AL.turn){ t.textContent='● 내 차례 — 돌을 탭 → 당겨서 발사!'; t.className='me'; }
+  else if(SOLO&&myRole){ t.textContent='내 차례 — '+(AL.turn===1?'흑':'백')+' 돌을 탭 → 당겨서 발사!'; t.className='me'; }
+  else if(myRole===AL.turn){ t.textContent='내 차례 — 돌을 탭 → 당겨서 발사!'; t.className='me'; }
   else t.textContent=(AL.turn===1?'흑':'백')+' 차례'+(myRole?'':' (관전)');
+  setMySide(myRole&&!SOLO?(myRole===1?'#2b3245':'#9aa6bd'):null, myRole===1?'흑 ⚫':'백 ⚪');
+  turnPing('alka', !AL.winner&&!SOLO&&AL.phase==='idle'&&myRole>0&&myRole===AL.turn&&!!(seats&&seats[1]&&seats[2]));
 }
 let AFADERS=[], fadeIv=null;           // knocked-out stones cry & fade out
 function addFader(s){ AFADERS.push({x:s.x,y:s.y,o:s.o,t0:performance.now()}); sfxFall(); kickFade(); }
@@ -847,9 +1219,8 @@ function astep(){
 }
 function arender(){ if(MODE!=='alka')return;
   cx.setTransform(DPR,0,0,DPR,0,0);
-  const g=cx.createLinearGradient(0,0,CSS,CSS); g.addColorStop(0,'#e2b87e'); g.addColorStop(1,'#c89554');
-  cx.fillStyle=g; cx.fillRect(0,0,CSS,CSS);
-  cx.strokeStyle='rgba(80,50,20,.35)'; cx.lineWidth=1;                   // goban-ish grid
+  woodBg();                                                              // 오목판과 같은 나무
+  cx.strokeStyle='rgba(74,45,16,.30)'; cx.lineWidth=1;                   // goban-ish grid
   for(let k=0;k<=8;k++){ const p=AB0+k*(AB1-AB0)/8;
     cx.beginPath(); cx.moveTo(AB0,p); cx.lineTo(AB1,p); cx.stroke();
     cx.beginPath(); cx.moveTo(p,AB0); cx.lineTo(p,AB1); cx.stroke(); }
@@ -945,9 +1316,9 @@ const mnAdj=i=>{ const x=i%M_SZ,y=(i/M_SZ)|0,out=[];
   for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){ if(!dx&&!dy)continue;
     const nx=x+dx,ny=y+dy; if(nx>=0&&nx<M_SZ&&ny>=0&&ny<M_SZ)out.push(ny*M_SZ+nx); }
   return out; };
-const M_BAN=(()=>{ const s=new Set(M_TR);              // no-mine zone: treasures + 2 around each start
-  for(const st of [M_ST[1],M_ST[2]]){ const x=st%M_SZ,y=(st/M_SZ)|0;
-    for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){ const nx=x+dx,ny=y+dy;
+const M_BAN=(()=>{ const s=new Set(M_TR);              // no-mine zone: treasures + 1 around each start
+  for(const st of [M_ST[1],M_ST[2]]){ const x=st%M_SZ,y=(st/M_SZ)|0;    // worker.js M_FORBID와 반드시 동일
+    for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){ const nx=x+dx,ny=y+dy;
       if(nx>=0&&nx<M_SZ&&ny>=0&&ny<M_SZ)s.add(ny*M_SZ+nx); } }
   return s; })();
 const M_PAD=30, M_TOP=56, M_CW=(600-M_PAD*2)/M_SZ;     // 11x11 cells under a HUD strip
@@ -990,11 +1361,12 @@ function mui(){ if(MODE!=='mine'||!MN)return;
   else if(MN.phase==='respawn'){
     if(myRole===MN.turn){ t.textContent='💥 복귀할 칸을 고르세요 (주황 칸)'; t.className='me'; }
     else t.textContent=mnName(MN.turn)+' 복귀할 곳 고르는 중…'; }
-  else if(myRole===MN.turn){ t.textContent='● 내 차례 — 인접한 칸으로 이동'; t.className='me'; }
+  else if(myRole===MN.turn){ t.textContent='내 차례 — 인접한 칸으로 이동'; t.className='me'; }
   else t.textContent=mnName(MN.turn)+' 차례'+(myRole?'':' (관전)');
-  /* 내 차례가 새로 시작되는 순간 햅틱 — 폰만 보다가 놓치는 걸 방지 */
+  setMySide(myRole?M_ACC[myRole]:null, myRole===1?'시안 ●':'앰버 ●');
+  /* 내 차례가 새로 시작되는 순간 알림 — 폰만 보다가 놓치는 걸 방지 */
   const myGo=!MN.winner&&MN.phase!=='place'&&myRole>0&&myRole===MN.turn&&!!(seats&&seats[1]&&seats[2]);
-  if(myGo&&!mnPinged&&navigator.vibrate) navigator.vibrate(60);
+  if(myGo&&!mnPinged){ sfxTurn(); if(navigator.vibrate) navigator.vibrate(60); }
   mnPinged=myGo;
 }
 function buildMineBar(){ const el=$('mineBar'); el.innerHTML='';
@@ -1055,27 +1427,38 @@ function minePiece(x,y,r,side){                 // mine 전용 말: 광택 보�
 }
 function mrender(){ if(MODE!=='mine'||!MN)return;
   cx.setTransform(DPR,0,0,DPR,0,0);
-  cx.fillStyle='#0c1120'; cx.fillRect(0,0,CSS,CSS);
+  boardBg();   // 다크 보드 공통: 중앙 발광 + 가장자리 비네트
   const placing=MN.phase==='place', me2=(myRole===1||myRole===2);
   /* HUD strip */
   const hy=30;
-  for(const s of [1,2]){ const p=seats&&seats[s];
+  for(const s of [1,2]){ const p=seats&&seats[s], isMe=(myRole===s);
     cx.textAlign=s===1?'left':'right'; const x=s===1?M_PAD:CSS-M_PAD;
-    cx.fillStyle=M_ACC[s]; cx.font='800 16px Pretendard,sans-serif';
-    cx.fillText((p?p.name:'—').slice(0,8),x,hy-11);
-    cx.fillStyle='#eef3fb'; cx.font='800 23px Pretendard,sans-serif';
+    cx.fillStyle=M_ACC[s]; cx.font='800 16px "Pretendard Variable",Pretendard,system-ui,sans-serif';
+    const nm2=(p?p.name:'—').slice(0,8);
+    cx.fillText(nm2,x,hy-11);
+    if(isMe){                                   // '나' 알약: 내 색이 뭔지 한눈에 (내 이름 바로 옆)
+      const nw=cx.measureText(nm2).width, pw=21, ph=14;
+      const px=s===1?x+nw+6:x-nw-6-pw, py=hy-11-11;
+      cx.fillStyle=M_ACC[s];
+      if(cx.roundRect){ cx.beginPath(); cx.roundRect(px,py,pw,ph,4); cx.fill(); }
+      else cx.fillRect(px,py,pw,ph);
+      cx.fillStyle='#0b1020'; cx.font='800 10px "Pretendard Variable",Pretendard,system-ui,sans-serif'; cx.textAlign='center';
+      cx.fillText('나',px+pw/2,py+ph-3.5);
+      cx.textAlign=s===1?'left':'right'; }
+    cx.fillStyle=isMe?M_ACC[s]:'#eef3fb';       // 내 점수는 내 색으로 — HUD 한쪽이 통째로 '내 것'으로 읽힘
+    cx.font='800 23px "Pretendard Variable",Pretendard,system-ui,sans-serif';
     cx.fillText(String(MN.score[s]|0),x,hy+13);
     if(!MN.winner&&!placing&&MN.turn===s){                       // 점수 옆에 배치 — 축 번호(1/11)와 안 겹침
       const sw=cx.measureText(String(MN.score[s]|0)).width;      // 23px 점수 폰트가 아직 활성인 시점에 측정
-      cx.fillStyle=M_ACC[s]; cx.font='800 12px Pretendard,sans-serif';
+      cx.fillStyle=M_ACC[s]; cx.font='800 12px "Pretendard Variable",Pretendard,system-ui,sans-serif';
       cx.fillText(s===1?'◀ 차례':'차례 ▶',x+(s===1?sw+8:-sw-8),hy+13); } }
-  cx.textAlign='center'; cx.fillStyle='rgba(159,178,207,.85)'; cx.font='700 14px Pretendard,sans-serif';
+  cx.textAlign='center'; cx.fillStyle='rgba(159,178,207,.85)'; cx.font='700 14px "Pretendard Variable",Pretendard,system-ui,sans-serif';
   if(placing) cx.fillText(`💣 ${M_N}개 배치 — 붉은 구역(출발지 주변·보물칸)은 금지`,CSS/2,hy-4);
   else cx.fillText(`💣 지뢰 ${MN.left} (겹침 ${Math.max(0,M_N*2-MN.minedCells)}) · 💎 다음 +${[10,15,20][MN.tCount]||'—'} · 턴 ${MN.moves}${MN.moves>=M_MAX-30?'/'+M_MAX:''}`,CSS/2,hy-4);
-  cx.fillStyle='rgba(159,178,207,.5)'; cx.font='700 12.5px Pretendard,sans-serif';
+  cx.fillStyle='rgba(159,178,207,.5)'; cx.font='700 12.5px "Pretendard Variable",Pretendard,system-ui,sans-serif';
   cx.fillText(placing?'상대도 같은 칸에 심을 수 있어요 — 겹치면 한 번에 터집니다':'득점 = 도착한 칸 주변 8칸의 지뢰 개수 (칸마다 1회)',CSS/2,hy+13);
   /* coordinates like the show (a-k / 1-11) */
-  cx.fillStyle='rgba(159,178,207,.5)'; cx.font='700 11px Pretendard,sans-serif';
+  cx.fillStyle='rgba(159,178,207,.5)'; cx.font='700 11px "Pretendard Variable",Pretendard,system-ui,sans-serif';
   for(let k=0;k<M_SZ;k++){
     cx.textAlign='center'; cx.fillText(String(k+1),M_PAD+k*M_CW+M_CW/2,M_TOP-3);
     cx.textAlign='right'; cx.fillText('abcdefghijk'[k],M_PAD-5,M_TOP+k*M_CW+M_CW/2+3); }
@@ -1091,13 +1474,13 @@ function mrender(){ if(MODE!=='mine'||!MN)return;
     cx.beginPath(); cx.moveTo(M_PAD,M_TOP+k*M_CW); cx.lineTo(M_PAD+M_SZ*M_CW,M_TOP+k*M_CW); cx.stroke(); }
   /* per-cell serial (a1~k11) like the show's 게임판 — 좌표로 외운다. 모바일(캔버스 ~0.58배)에서도 읽히게 크게 */
   cx.fillStyle=placing?'rgba(203,216,238,.62)':'rgba(203,216,238,.44)';
-  cx.font='700 12px Pretendard,sans-serif'; cx.textAlign='center';
+  cx.font='700 12px "Pretendard Variable",Pretendard,system-ui,sans-serif'; cx.textAlign='center';
   for(let i=0;i<M_CELLS;i++) cx.fillText('abcdefghijk'[(i/M_SZ)|0]+(i%M_SZ+1), mcx(i)+M_CW/2, mcy(i)+12);
   /* start cells */
   for(const s of [1,2]){ const i=M_ST[s],x=mcx(i),y=mcy(i);
     cx.strokeStyle=M_ACC[s]; cx.lineWidth=1.6; cx.setLineDash([4,3]);
     cx.strokeRect(x+3,y+3,M_CW-6,M_CW-6); cx.setLineDash([]);
-    cx.fillStyle=M_ACC[s]; cx.font='800 8.5px Pretendard,sans-serif'; cx.textAlign='center';
+    cx.fillStyle=M_ACC[s]; cx.font='800 8.5px "Pretendard Variable",Pretendard,system-ui,sans-serif'; cx.textAlign='center';
     cx.fillText('P'+s,x+M_CW/2,y+M_CW-5); }
   /* remaining treasures */
   cx.textBaseline='middle';
@@ -1107,11 +1490,11 @@ function mrender(){ if(MODE!=='mine'||!MN)return;
   /* scored cells: minesweeper-style numbers, tiny tick = who claimed it */
   for(const u of MN.used){ const x=mcx(u.i)+M_CW/2,y=mcy(u.i)+M_CW/2;
     cx.textAlign='center';
-    if(u.tre){ cx.font='700 11px Pretendard,sans-serif'; cx.fillStyle='rgba(255,215,106,.8)';
+    if(u.tre){ cx.font='700 11px "Pretendard Variable",Pretendard,system-ui,sans-serif'; cx.fillStyle='rgba(255,215,106,.8)';
       cx.fillText('💎+'+u.v,x,y); }
-    else if(u.v===0){ cx.fillStyle='rgba(159,178,207,.4)'; cx.font='800 15px Pretendard,sans-serif'; cx.fillText('·',x,y); }
+    else if(u.v===0){ cx.fillStyle='rgba(159,178,207,.4)'; cx.font='800 15px "Pretendard Variable",Pretendard,system-ui,sans-serif'; cx.fillText('·',x,y); }
     else{ cx.fillStyle=u.v>=5?'#ff6f61':u.v>=3?'#ffb454':u.v===2?'#3ee08a':'#7fd7ff';
-      cx.font='800 17px Pretendard,sans-serif'; cx.fillText(String(u.v),x,y); }
+      cx.font='800 17px "Pretendard Variable",Pretendard,system-ui,sans-serif'; cx.fillText(String(u.v),x,y); }
     cx.fillStyle=M_ACC[u.s]||'#888'; cx.fillRect(mcx(u.i)+3,mcy(u.i)+3,4,4); }
   /* exploded spots */
   cx.textAlign='center';
@@ -1170,7 +1553,7 @@ function mrender(){ if(MODE!=='mine'||!MN)return;
   /* score popups */
   cx.textBaseline='alphabetic';
   for(const f of MN.fx){ const age=performance.now()-f.t0, a=Math.max(0,1-age/1100);
-    cx.globalAlpha=a; cx.fillStyle=f.col; cx.font='800 20px Pretendard,sans-serif'; cx.textAlign='center';
+    cx.globalAlpha=a; cx.fillStyle=f.col; cx.font='800 20px "Pretendard Variable",Pretendard,system-ui,sans-serif'; cx.textAlign='center';
     cx.fillText(f.txt,mcx(f.i)+M_CW/2,mcy(f.i)+10-age*0.022); cx.globalAlpha=1; }
   /* state badges LAST: the ✨/💫 badges share the popup's spot, so they must draw over it.
      Emoji inherit fillStyle's alpha — leave it opaque or they vanish. Disc = reads on any bg. */
@@ -1182,13 +1565,19 @@ function mrender(){ if(MODE!=='mine'||!MN)return;
     cx.fillStyle='rgba(8,14,28,.82)'; cx.fill();
     cx.strokeStyle=M_ACC[s]; cx.lineWidth=1; cx.stroke();
     cx.fillStyle='#fff'; cx.fillText(bd,x,y); }
+  /* 내 말에 '나' 태그 (좌하단 — 배지/턴마커와 자리 안 겹침). 불투명 배경이라 모바일 축소에도 읽힘 */
+  if(me2){ const x=mcx(MN.pos[myRole])+M_CW/2-pr*0.70, y=mcy(MN.pos[myRole])+M_CW/2+pr*0.74;
+    cx.beginPath(); cx.arc(x,y,8.5,0,7);
+    cx.fillStyle=M_ACC[myRole]; cx.fill();
+    cx.strokeStyle='rgba(8,14,28,.75)'; cx.lineWidth=1.2; cx.stroke();
+    cx.fillStyle='#0b1020'; cx.font='800 10px "Pretendard Variable",Pretendard,system-ui,sans-serif'; cx.fillText('나',x,y+0.5); }
   cx.textBaseline='alphabetic';   // restore: cx is shared across modes + this fn's own HUD/axis/serial next frame
   /* end banner */
   if(MN.winner){ const cy2=M_TOP+M_SZ*M_CW/2;
     cx.fillStyle='rgba(5,8,16,.5)'; cx.fillRect(0,cy2-44,CSS,88);
-    cx.fillStyle=MN.winner===3?'#eef3fb':M_ACC[MN.winner]; cx.font='800 32px Pretendard,sans-serif'; cx.textAlign='center';
+    cx.fillStyle=MN.winner===3?'#eef3fb':M_ACC[MN.winner]; cx.font='800 32px "Pretendard Variable",Pretendard,system-ui,sans-serif'; cx.textAlign='center';
     cx.fillText(MN.winner===3?'🤝 무승부!':'🏆 '+mnName(MN.winner)+' 승리!',CSS/2,cy2);
-    cx.fillStyle='#eef3fb'; cx.font='800 19px Pretendard,sans-serif';
+    cx.fillStyle='#eef3fb'; cx.font='800 19px "Pretendard Variable",Pretendard,system-ui,sans-serif';
     cx.fillText(MN.score[1]+' : '+MN.score[2]+'  ·  💣 전체 지뢰 공개',CSS/2,cy2+29); }
 }
 function mineTap(i){ if(!MN||MN.winner)return;
@@ -1316,13 +1705,13 @@ function beatTick(){ const B=BEAT; if(!B||B.phase!=='playing'){ stopBeat(); retu
 /* render */
 const BCOLS=['#35dcff','#3ee08a','#ffb454','#ff6f61'], BLX=60, BLW=120, BHY=520, BAPP=1500;
 function brenderIdle(){ cx.setTransform(DPR,0,0,DPR,0,0);
-  cx.fillStyle='#0c1120'; cx.fillRect(0,0,CSS,CSS);
-  cx.fillStyle='rgba(159,178,207,.8)'; cx.font='700 22px Pretendard,sans-serif'; cx.textAlign='center';
+  boardBg();   // 다크 보드 공통: 중앙 발광 + 가장자리 비네트
+  cx.fillStyle='rgba(159,178,207,.8)'; cx.font='700 22px "Pretendard Variable",Pretendard,system-ui,sans-serif'; cx.textAlign='center';
   cx.fillText('🎵 라운드 시작을 누르면 같은 비트가 흐릅니다',300,290);
   cx.fillText('D · F · J · K 로 노트를 치세요',300,325); }
 function brender(st,done){ const B=BEAT;
   cx.setTransform(DPR,0,0,DPR,0,0);
-  cx.fillStyle='#0c1120'; cx.fillRect(0,0,CSS,CSS);
+  boardBg();   // 다크 보드 공통: 중앙 발광 + 가장자리 비네트
   const pn=performance.now();
   for(let l=0;l<4;l++){ const x=BLX+l*BLW;
     const pf=Math.max(0,1-(pn-(B.press[l]||0))/180);
@@ -1330,27 +1719,27 @@ function brender(st,done){ const B=BEAT;
     cx.strokeStyle='rgba(140,170,220,.14)'; cx.strokeRect(x,0,BLW,BHY); }
   cx.strokeStyle='rgba(53,220,255,.85)'; cx.lineWidth=3;
   cx.beginPath(); cx.moveTo(BLX,BHY); cx.lineTo(BLX+4*BLW,BHY); cx.stroke(); cx.lineWidth=1;
-  cx.font='800 20px Pretendard,sans-serif'; cx.textAlign='center';
+  cx.font='800 20px "Pretendard Variable",Pretendard,system-ui,sans-serif'; cx.textAlign='center';
   'DFJK'.split('').forEach((k,l)=>{ cx.fillStyle='rgba(159,178,207,.55)'; cx.fillText(k,BLX+l*BLW+BLW/2,556); });
   for(let k=Math.max(0,B.next-6);k<B.chart.notes.length;k++){ const n=B.chart.notes[k];
     const dt=n.t-st; if(dt>BAPP)break; if(n.hit||dt<-220)continue;
     const y=BHY-(dt/BAPP)*BHY;
     cx.fillStyle=n.miss?'rgba(120,130,150,.35)':BCOLS[n.l];
     cx.fillRect(BLX+n.l*BLW+10,y-9,BLW-20,18); }
-  cx.fillStyle='#eef3fb'; cx.font='800 26px Pretendard,sans-serif';
+  cx.fillStyle='#eef3fb'; cx.font='800 26px "Pretendard Variable",Pretendard,system-ui,sans-serif';
   cx.fillText(String(B.score),300,42);
-  if(B.combo>1){ cx.fillStyle='rgba(53,220,255,.9)'; cx.font='800 34px Pretendard,sans-serif';
+  if(B.combo>1){ cx.fillStyle='rgba(53,220,255,.9)'; cx.font='800 34px "Pretendard Variable",Pretendard,system-ui,sans-serif';
     cx.fillText(B.combo+' COMBO',300,96); }
   if(B.judge&&pn-B.judge.at<450){ const a=1-(pn-B.judge.at)/450;
-    cx.globalAlpha=a; cx.font='800 30px Pretendard,sans-serif';
+    cx.globalAlpha=a; cx.font='800 30px "Pretendard Variable",Pretendard,system-ui,sans-serif';
     cx.fillStyle=B.judge.j==='PERFECT'?'#3ee08a':B.judge.j==='GOOD'?'#35dcff':B.judge.j==='BAD'?'#ffb454':'#ff6f61';
     cx.fillText(B.judge.j,300,440);
-    if(B.judge.sub){ cx.font='800 15px Pretendard,sans-serif'; cx.fillStyle='rgba(238,243,251,.8)';
+    if(B.judge.sub){ cx.font='800 15px "Pretendard Variable",Pretendard,system-ui,sans-serif'; cx.fillStyle='rgba(238,243,251,.8)';
       cx.fillText(B.judge.sub==='EARLY'?'▲ 빠름':'▼ 느림',300,466); }
     cx.globalAlpha=1; }
-  if(st<0){ cx.fillStyle='#fff'; cx.font='800 72px Pretendard,sans-serif';
+  if(st<0){ cx.fillStyle='#fff'; cx.font='800 72px "Pretendard Variable",Pretendard,system-ui,sans-serif';
     cx.fillText(String(Math.ceil(-st/1000)),300,300); }
-  if(done){ cx.fillStyle='#fff'; cx.font='800 44px Pretendard,sans-serif'; cx.fillText('🏁 완주!',300,300); } }
+  if(done){ cx.fillStyle='#fff'; cx.font='800 44px "Pretendard Variable",Pretendard,system-ui,sans-serif'; cx.fillText('🏁 완주!',300,300); } }
 /* tiny synth (no assets, seeded chart == same beat for everyone) */
 let actx=null, noiseBuf=null;
 let MUTED=localStorage.getItem('muted')==='1';
@@ -1397,6 +1786,25 @@ function sfxGood(){ if(!sfxOK())return; try{ const w=actx.currentTime;   // 정�
     o.type='triangle'; o.frequency.value=f2;
     g2.gain.setValueAtTime(0.12,w+i*0.09); g2.gain.exponentialRampToValueAtTime(0.001,w+i*0.09+0.16);
     o.connect(g2).connect(actx.destination); o.start(w+i*0.09); o.stop(w+i*0.09+0.18); });}catch(e){} }
+function sfxNope(){ if(!sfxOK())return; try{ const w=actx.currentTime;   // 금수/거부 '뿌' (하강 2음)
+  [330,247].forEach((f2,i)=>{ const t=w+i*0.09;
+    const o=actx.createOscillator(),g2=actx.createGain();
+    o.type='sawtooth'; o.frequency.setValueAtTime(f2,t);
+    g2.gain.setValueAtTime(0.0001,t); g2.gain.exponentialRampToValueAtTime(0.10,t+0.01);
+    g2.gain.exponentialRampToValueAtTime(0.0001,t+0.13);
+    o.connect(g2).connect(actx.destination); o.start(t); o.stop(t+0.15); });}catch(e){} }
+function sfxTurn(){ if(!sfxOK())return; try{ const w=actx.currentTime;   // 내 차례 '띠로링~' (E5-A5-C#6 상승)
+  [659.3,880,1108.7].forEach((f2,i)=>{ const t=w+i*0.075;
+    const o=actx.createOscillator(),g2=actx.createGain();
+    o.type='triangle'; o.frequency.setValueAtTime(f2,t);
+    g2.gain.setValueAtTime(0.0001,t); g2.gain.exponentialRampToValueAtTime(0.13,t+0.012);
+    g2.gain.exponentialRampToValueAtTime(0.0001,t+0.20);
+    o.connect(g2).connect(actx.destination); o.start(t); o.stop(t+0.22); });
+  const o2=actx.createOscillator(),g3=actx.createGain();                 // 꼬리 반짝임
+  o2.type='sine'; o2.frequency.setValueAtTime(1760,w+0.15); o2.frequency.exponentialRampToValueAtTime(2637,w+0.30);
+  g3.gain.setValueAtTime(0.0001,w+0.15); g3.gain.exponentialRampToValueAtTime(0.05,w+0.18);
+  g3.gain.exponentialRampToValueAtTime(0.0001,w+0.34);
+  o2.connect(g3).connect(actx.destination); o2.start(w+0.15); o2.stop(w+0.36);}catch(e){} }
 let lastHitSfx=0;
 /* ---- 최근 방 재입장 ---- */
 function updateLastChip(){ try{
@@ -1538,40 +1946,53 @@ function tetTick(){ const T=TET; if(!T||T.phase!=='playing'){ stopTet(); return;
     send({t:'tscore',s:T.score,l:T.lines,b:packTetBoard()}); }
   if(pn-T.lastBoard>500){ T.lastBoard=pn; renderTetScores(); } }
 function trenderIdle(){ cx.setTransform(DPR,0,0,DPR,0,0);
-  cx.fillStyle='#0c1120'; cx.fillRect(0,0,CSS,CSS);
-  cx.fillStyle='rgba(159,178,207,.85)'; cx.font='700 21px Pretendard,sans-serif'; cx.textAlign='center';
+  boardBg();   // 다크 보드 공통: 중앙 발광 + 가장자리 비네트
+  cx.fillStyle='rgba(159,178,207,.85)'; cx.font='700 21px "Pretendard Variable",Pretendard,system-ui,sans-serif'; cx.textAlign='center';
   cx.fillText('🧱 게임 시작을 누르면 모두 같은 블록이 내려옵니다',300,280);
   cx.fillText('줄을 지우면 상대에게 가비지 공격! 💣',300,315); }
 function trender(){ const T=TET; if(MODE!=='tet'||!T||!T.board)return;
   cx.setTransform(DPR,0,0,DPR,0,0);
-  cx.fillStyle='#0c1120'; cx.fillRect(0,0,CSS,CSS);
-  cx.fillStyle='#080d18'; cx.fillRect(TFX,TFY,10*TCS,20*TCS);
-  cx.strokeStyle='rgba(140,170,220,.1)'; cx.lineWidth=1;
-  for(let x=0;x<=10;x++){ cx.beginPath(); cx.moveTo(TFX+x*TCS,TFY); cx.lineTo(TFX+x*TCS,TFY+20*TCS); cx.stroke(); }
-  for(let y=0;y<=20;y++){ cx.beginPath(); cx.moveTo(TFX,TFY+y*TCS); cx.lineTo(TFX+10*TCS,TFY+y*TCS); cx.stroke(); }
+  boardBg();   // 다크 보드 공통: 중앙 발광 + 가장자리 비네트
+  const FW=10*TCS, FH=20*TCS;
+  rrect(TFX-7,TFY-7,FW+14,FH+14,14); cx.fillStyle='rgba(12,19,36,.92)'; cx.fill();
+  cx.strokeStyle='rgba(140,170,220,.20)'; cx.lineWidth=1; cx.stroke();
+  cx.fillStyle='#080d18'; cx.fillRect(TFX,TFY,FW,FH);
+  cx.strokeStyle='rgba(140,170,220,.07)'; cx.lineWidth=1;      // 세로선 + 4줄 가이드만 → 줄이 읽힌다
+  for(let x=1;x<10;x++){ cx.beginPath(); cx.moveTo(TFX+x*TCS,TFY); cx.lineTo(TFX+x*TCS,TFY+FH); cx.stroke(); }
+  for(let y=4;y<20;y+=4){ cx.beginPath(); cx.moveTo(TFX,TFY+y*TCS); cx.lineTo(TFX+FW,TFY+y*TCS); cx.stroke(); }
   const cell=(x,y,col,ghost)=>{ if(y<0)return;
-    if(ghost){ cx.strokeStyle=col; cx.lineWidth=2; cx.strokeRect(TFX+x*TCS+3,TFY+y*TCS+3,TCS-6,TCS-6); return; }
-    cx.fillStyle=col; cx.fillRect(TFX+x*TCS+1,TFY+y*TCS+1,TCS-2,TCS-2);
-    cx.fillStyle='rgba(255,255,255,.18)'; cx.fillRect(TFX+x*TCS+1,TFY+y*TCS+1,TCS-2,5); };
+    const bx=TFX+x*TCS, by=TFY+y*TCS;
+    if(ghost){ rrect(bx+2.5,by+2.5,TCS-5,TCS-5,4);
+      cx.fillStyle=hexA(col,.13); cx.fill();
+      cx.setLineDash([4,3]); cx.strokeStyle=hexA(col,.62); cx.lineWidth=1.6; cx.stroke();
+      cx.setLineDash([]); return; }
+    rrect(bx+1,by+1,TCS-2,TCS-2,4); cx.fillStyle=col; cx.fill();
+    cx.strokeStyle='rgba(0,0,0,.30)'; cx.lineWidth=1; cx.stroke();      // 스택 경계가 또렷해진다
+    rrect(bx+3,by+2.5,TCS-6,(TCS-2)*.34,3); cx.fillStyle='rgba(255,255,255,.26)'; cx.fill(); };
   for(let y=0;y<20;y++) for(let x=0;x<10;x++) if(T.board[y][x]) cell(x,y,TCOLS[T.board[y][x]]);
+  let tTop=20; for(let y=0;y<20;y++){ if(T.board[y].some(v=>v)){ tTop=y; break; } }
+  if(tTop<6){ const dg=cx.createLinearGradient(0,TFY,0,TFY+FH*.42);     // 위험: 스택이 천장에 접근
+    dg.addColorStop(0,'rgba(255,90,70,'+(.30*(6-tTop)/6).toFixed(3)+')');
+    dg.addColorStop(1,'rgba(255,90,70,0)');
+    cx.fillStyle=dg; cx.fillRect(TFX,TFY,FW,FH*.42); }
   if(T.cur&&!T.over){ const c=T.cur; let gy=c.y;
     while(!tHit(c.p,c.r,c.x,gy+1)) gy++;
-    for(const [dx2,dy2] of tCells(c.p,c.r)) cell(c.x+dx2,gy+dy2,'rgba(255,255,255,.28)',true);
+    for(const [dx2,dy2] of tCells(c.p,c.r)) cell(c.x+dx2,gy+dy2,TCOLS[c.p],true);   // 고스트도 조각 색
     for(const [dx2,dy2] of tCells(c.p,c.r)) cell(c.x+dx2,c.y+dy2,TCOLS[c.p]); }
   // next 3
-  cx.fillStyle='rgba(159,178,207,.7)'; cx.font='700 13px Pretendard,sans-serif'; cx.textAlign='left';
+  cx.fillStyle='rgba(159,178,207,.7)'; cx.font='700 13px "Pretendard Variable",Pretendard,system-ui,sans-serif'; cx.textAlign='left';
   cx.fillText('NEXT',462,46);
   T.queue.slice(0,3).forEach((p,i)=>{ for(const [dx2,dy2] of TSHP[p]){
     cx.fillStyle=TCOLS[p]; cx.fillRect(460+dx2*15,58+i*66+dy2*15,13,13); } });
   // left HUD
-  cx.textAlign='right'; cx.fillStyle='#eef3fb'; cx.font='800 20px Pretendard,sans-serif';
+  cx.textAlign='right'; cx.fillStyle='#eef3fb'; cx.font='800 20px "Pretendard Variable",Pretendard,system-ui,sans-serif';
   cx.fillText(String(T.score),150,60);
-  cx.fillStyle='rgba(159,178,207,.8)'; cx.font='700 13px Pretendard,sans-serif';
+  cx.fillStyle='rgba(159,178,207,.8)'; cx.font='700 13px "Pretendard Variable",Pretendard,system-ui,sans-serif';
   cx.fillText(T.lines+'줄 · Lv'+tetLevel(),150,82);
-  if(T.pend>0){ cx.fillStyle='#ff6f61'; cx.font='800 17px Pretendard,sans-serif';
+  if(T.pend>0){ cx.fillStyle='#ff6f61'; cx.font='800 17px "Pretendard Variable",Pretendard,system-ui,sans-serif';
     cx.fillText('⚠ 가비지 +'+T.pend,150,116); }
   // HOLD box (C키 / 위로 휙 / ⇄)
-  cx.textAlign='left'; cx.fillStyle='rgba(159,178,207,.7)'; cx.font='700 13px Pretendard,sans-serif';
+  cx.textAlign='left'; cx.fillStyle='rgba(159,178,207,.7)'; cx.font='700 13px "Pretendard Variable",Pretendard,system-ui,sans-serif';
   cx.fillText('HOLD',60,146);
   cx.strokeStyle='rgba(140,170,220,.3)'; cx.strokeRect(56,154,72,52);
   if(T.hold){ cx.globalAlpha=T.holdUsed?0.35:1;
@@ -1592,14 +2013,14 @@ function trender(){ const T=TET; if(MODE!=='tet'||!T||!T.board)return;
         for(let x2=0;x2<10;x2++) if(v&(1<<x2)) cx.fillRect(bx+x2*5,by+y2*5,4,4); } }
     if(o.fin){ cx.fillStyle='rgba(5,8,16,.55)'; cx.fillRect(bx,by,50,100);
       cx.font='18px sans-serif'; cx.textAlign='center'; cx.fillText('💀',bx+25,by+58); }
-    cx.fillStyle='rgba(159,178,207,.9)'; cx.font='700 10px Pretendard,sans-serif'; cx.textAlign='center';
+    cx.fillStyle='rgba(159,178,207,.9)'; cx.font='700 10px "Pretendard Variable",Pretendard,system-ui,sans-serif'; cx.textAlign='center';
     cx.fillText(o.name.slice(0,6),bx+25,by+113);
     cx.fillText(String(o.s),bx+25,by+126); });
   const st=songTet();
-  if(st<0){ cx.fillStyle='#fff'; cx.font='800 72px Pretendard,sans-serif'; cx.textAlign='center';
+  if(st<0){ cx.fillStyle='#fff'; cx.font='800 72px "Pretendard Variable",Pretendard,system-ui,sans-serif'; cx.textAlign='center';
     cx.fillText(String(Math.ceil(-st/1000)),300,300); }
   if(T.over){ cx.fillStyle='rgba(5,8,16,.55)'; cx.fillRect(TFX,TFY,10*TCS,20*TCS);
-    cx.fillStyle='#ff6f61'; cx.font='800 40px Pretendard,sans-serif'; cx.textAlign='center';
+    cx.fillStyle='#ff6f61'; cx.font='800 40px "Pretendard Variable",Pretendard,system-ui,sans-serif'; cx.textAlign='center';
     cx.fillText('💀 탈락',300,300); } }
 function renderTetScores(){ if(MODE!=='tet'||!TET)return; const el=$('scores'); el.innerHTML='';
   const me=$('nick').value.trim().slice(0,12);

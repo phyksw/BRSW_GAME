@@ -25,6 +25,7 @@ const emptyGame = (mode) => ({
   mode: mode || null,                // 'omok' | 'draw' | 'alka' — set at room creation (switchable between rounds)
   board: new Array(CELLS).fill(0),   // ── omok: 0 empty, 1 black, 2 white
   turn: 1, winner: 0, winLine: null, moves: 0, round: 1, last: -1,
+  r33: true,                         //    omok: 33 금수(쌍삼) 적용 여부 — 첫 수 전에만 변경 가능
   hist: [],                          //    omok move history [{i,s}] — enables 무르기 (undo)
   seats: { 1: null, 2: null },       //    {token,name,online} (shared by omok + alka)
   d: null,                           // ── draw: {players,order,drawer,word,roundN,roundEnd,phase,guessed}
@@ -60,9 +61,9 @@ const mAdj = i => { const x = i % MSZ, y = (i / MSZ) | 0, out = [];
     const nx = x + dx, ny = y + dy;
     if (nx >= 0 && nx < MSZ && ny >= 0 && ny < MSZ) out.push(ny * MSZ + nx); }
   return out; };
-const M_FORBID = (() => { const s = new Set(M_TREAS);   // no mines on treasures or within 2 of either start
+const M_FORBID = (() => { const s = new Set(M_TREAS);   // no mines on treasures or within 1 of either start
   for (const st of [M_START[1], M_START[2]]) { const x = st % MSZ, y = (st / MSZ) | 0;
-    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {   // 1칸: 부활칸(=인접 8칸)만 보호
       const nx = x + dx, ny = y + dy;
       if (nx >= 0 && nx < MSZ && ny >= 0 && ny < MSZ) s.add(ny * MSZ + nx); } }
   return s; })();
@@ -86,6 +87,9 @@ export class GameRoom {
     if (!this.game) {
       let g = await this.ctx.storage.get('game');
       if (g && !('mode' in g)) { g.mode = 'omok'; g.d = null; }   // legacy shape
+      // v0.27 이전 저장분에는 r33이 없다. 이미 진행 중인 판에 규칙을 소급 적용하면
+      // (토글도 첫 수 이후 잠기므로) 아무도 끌 수 없는 상태가 된다 → 진행 중이면 OFF로 시작.
+      if (g && g.r33 === undefined) g.r33 = !((g.moves | 0) > 0);
       this.game = g || emptyGame();
     }
     return this.game;
@@ -172,6 +176,7 @@ export class GameRoom {
     }
     return { t: 'state', mode: 'omok', board: g.board.join(''), turn: g.turn, winner: g.winner, winLine: g.winLine,
              round: g.round, last: g.last, role, seats: this.seatsPub(g), solo: this.isSolo(g),
+             r33: g.r33 !== false,
              youIdx: (g.tm && role && g.tm.mates[role] && g.tm.mates[role].token === token) ? 1 : 0 };
   }
   /* ---- draw-mode helpers ---- */
@@ -737,6 +742,18 @@ export class GameRoom {
       return;
     }
 
+    if (m.t === 'o33') {                          // 33 금수 on/off — 첫 수 전에만, 방 전체 적용
+      if (g.mode !== 'omok') return;
+      if (att.role !== 1 && att.role !== 2) return;
+      if (g.moves > 0 || g.winner) return;        // 판이 시작되면 잠금 (도중 규칙 변경 금지)
+      const v = !!m.v;
+      if ((g.r33 !== false) === v) return;
+      g.r33 = v;
+      await this.save();
+      this.bcast({ t: 'o33', v: v ? 1 : 0 });
+      this.bcast({ t: 'sys', text: `${att.name}님이 33 금수(쌍삼)를 ${v ? '적용' : '해제'}했어요` });
+      return;
+    }
     if (m.t === 'move') {
       if (g.mode !== 'omok') return;
       const i = m.i | 0;
@@ -749,6 +766,10 @@ export class GameRoom {
       if (mem.length > 1) {                      // team: members alternate within the side
         const up = g.tm.idx[side] % mem.length;
         if (mi !== up && mem[up].online !== false) return;   // (an offline teammate may be covered)
+      }
+      if (g.r33 !== false && forbidden33(g.board, i, side)) {   // 쌍삼 금수: 왜 거부됐는지 반드시 알려준다
+        try { ws.send(JSON.stringify({ t: 'nope', why: '33', i })); } catch {}
+        return;
       }
       g.board[i] = side; g.moves++; g.last = i;
       (g.hist = g.hist || []).push({ i, s: side });
@@ -907,6 +928,7 @@ export class GameRoom {
       ng.seats[1] = s2; ng.seats[2] = s1;        // swap colors each round
       ng.round = (g.round || 1) + 1;
       ng.wins = g.wins || {};                    // rematch tally survives
+      ng.r33 = g.r33 !== false;                  // 방에서 합의한 33 금수 설정도 다음 판으로 이어짐
       ng.tm = g.tm ? { mates: { 1: g.tm.mates[2], 2: g.tm.mates[1] }, idx: { 1: 0, 2: 0 } } : null;  // teams swap too
       this.game = ng;
       await this.save();
@@ -995,6 +1017,50 @@ export class GameRoom {
   async webSocketError(ws) { return this.webSocketClose(ws); }
 }
 
+/* ---- 오목 33 금수(쌍삼) ----
+   한 수로 '열린 삼'이 2개 이상 생기면 금지. 흑백 모두 적용(기본 ON, 첫 수 전 방 옵션으로 해제 가능).
+   '열린 삼' = 빈칸 하나를 더 채우면 '열린 사'(양끝이 빈 정확히 4목)가 되는 형태 → 끊긴 삼(XX.X)도 포함.
+   승리수(5목)는 금수보다 우선: 5목이 되는 수는 언제나 허용. */
+const DIRS4 = [[1, 0], [0, 1], [1, 1], [1, -1]];
+function lineRun(b, i, dx, dy, v) {          // i를 지나는 연속 돌들 + 양쪽 바로 밖 칸(-1이면 판 밖)
+  const x = i % SIZE, y = (i / SIZE) | 0, cells = [i], ends = {};
+  for (const s of [1, -1]) {
+    let nx = x + dx * s, ny = y + dy * s;
+    while (nx >= 0 && nx < SIZE && ny >= 0 && ny < SIZE && b[ny * SIZE + nx] === v) {
+      cells.push(ny * SIZE + nx); nx += dx * s; ny += dy * s; }
+    ends[s] = (nx >= 0 && nx < SIZE && ny >= 0 && ny < SIZE) ? ny * SIZE + nx : -1;
+  }
+  return { cells, e1: ends[1], e2: ends[-1] };
+}
+function isOpenThree(b, i, dx, dy, v) {
+  const x = i % SIZE, y = (i / SIZE) | 0;
+  for (let t = -4; t <= 4; t++) {
+    if (!t) continue;
+    const nx = x + dx * t, ny = y + dy * t;
+    if (nx < 0 || nx >= SIZE || ny < 0 || ny >= SIZE) continue;
+    const j = ny * SIZE + nx;
+    if (b[j] !== 0) continue;
+    b[j] = v;                                // 가정: 여기에 한 수 더 두면 열린 사가 되는가?
+    const r = lineRun(b, j, dx, dy, v);
+    const open = r.cells.length === 4 && r.e1 >= 0 && b[r.e1] === 0 && r.e2 >= 0 && b[r.e2] === 0
+                 && r.cells.includes(i);     // 그 4목이 방금 둔 돌 i를 포함해야 'i를 지나는 삼'
+    b[j] = 0;
+    if (open) return true;
+  }
+  return false;
+}
+function doubleThree(b, i, v) {              // b[i]는 이미 v로 채워진 상태로 호출
+  let n = 0;
+  for (const [dx, dy] of DIRS4) if (isOpenThree(b, i, dx, dy, v) && ++n >= 2) return true;
+  return false;
+}
+function forbidden33(b, i, v) {              // 이 칸에 두면 금수인가 (판 상태를 바꾸지 않음)
+  if (b[i] !== 0) return false;
+  b[i] = v;
+  const bad = !winLine(b, i) && doubleThree(b, i, v);
+  b[i] = 0;
+  return bad;
+}
 function winLine(b, i) {
   const x = i % SIZE, y = (i / SIZE) | 0, v = b[i];
   for (const [dx, dy] of [[1, 0], [0, 1], [1, 1], [1, -1]]) {
